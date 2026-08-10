@@ -30,6 +30,12 @@ const TOPIC_KEYWORDS: Record<Topic, RegExp> = {
   art: /그림|음악|디자인|미술|작곡|draw|music|design/i,
 }
 
+function extractTopics(message: string): Topic[] {
+  return (Object.entries(TOPIC_KEYWORDS) as [Topic, RegExp][])
+    .filter(([, pattern]) => pattern.test(message))
+    .map(([topic]) => topic)
+}
+
 export function isMemoryRecall(message: string) {
   const explicitTaskRequest =
     /기억해\s*(?:줘|주세요|둬|놓아|달라)|할 일|해야|리마인드|todo|task|등록해/i.test(message)
@@ -44,9 +50,7 @@ export function isMemoryRecall(message: string) {
 }
 
 function mockResult(message: string, state: CharacterState): AiResult {
-  const topics = (Object.entries(TOPIC_KEYWORDS) as [Topic, RegExp][])
-    .filter(([, pattern]) => pattern.test(message))
-    .map(([topic]) => topic)
+  const topics = extractTopics(message)
 
   const asksMemory = isMemoryRecall(message)
   const wantsQuest = !asksMemory && /기억해|할 일|해야|리마인드|todo|task/i.test(message)
@@ -162,7 +166,16 @@ export async function getAiResponse(
     window.clearTimeout(timeout)
     if (!response.ok) throw new Error(`AI request failed: ${response.status}`)
     const parsed = responseSchema.parse(await response.json())
-    return { result: parsed, mode: 'live' }
+    const deterministicFallback = mockResult(message, state)
+    return {
+      result: {
+        ...parsed,
+        memoryCandidate: parsed.memoryCandidate ?? deterministicFallback.memoryCandidate,
+        topics: [...new Set([...parsed.topics, ...extractTopics(message)])],
+        questIntent: parsed.questIntent ?? deterministicFallback.questIntent,
+      },
+      mode: 'live',
+    }
   } catch {
     return { result: mockResult(message, state), mode: 'demo' }
   }
