@@ -6,6 +6,7 @@ interface Env {
 
 const MAX_REQUEST_BYTES = 32_000
 const MAX_MESSAGE_CHARS = 1_200
+const MAX_UPSTREAM_ATTEMPTS = 2
 const ALLOWED_TOPICS = new Set(['coding', 'night', 'travel', 'art', 'making'])
 
 const responseSchema = {
@@ -121,6 +122,16 @@ function jsonResponse(body: unknown, status: number, headers: Record<string, str
   })
 }
 
+function publicErrorCode(error: unknown) {
+  const message = error instanceof Error ? error.message : ''
+  const upstreamStatus = message.match(/status (\d{3})/)?.[1]
+  if (upstreamStatus) return `UPSTREAM_${upstreamStatus}`
+  if (message === 'Gemini returned no text') return 'EMPTY_MODEL_OUTPUT'
+  if (message === 'Gemini returned invalid structured output') return 'INVALID_MODEL_OUTPUT'
+  if (error instanceof SyntaxError) return 'INVALID_JSON_OUTPUT'
+  return 'REQUEST_FAILED'
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = request.headers.get('Origin') ?? ''
@@ -156,23 +167,33 @@ export default {
       if (!isRecord(payload) || typeof payload.message !== 'string' || payload.message.length > MAX_MESSAGE_CHARS) {
         return jsonResponse({ error: 'Invalid message' }, 400, headers)
       }
-      const gemini = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-        body: JSON.stringify({
-          systemInstruction: { parts: [{ text: systemPrompt }] },
-          contents: [{ role: 'user', parts: [{ text: JSON.stringify(payload) }] }],
-          generationConfig: {
-            responseMimeType: 'application/json',
-            responseJsonSchema: responseSchema,
-            maxOutputTokens: 700,
-          },
-        }),
+      const upstreamBody = JSON.stringify({
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        contents: [{ role: 'user', parts: [{ text: JSON.stringify(payload) }] }],
+        generationConfig: {
+          responseMimeType: 'application/json',
+          responseJsonSchema: responseSchema,
+          maxOutputTokens: 700,
+        },
       })
-      if (!gemini.ok) {
+      let gemini: Response | undefined
+      for (let attempt = 1; attempt <= MAX_UPSTREAM_ATTEMPTS; attempt += 1) {
+        gemini = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
+          body: upstreamBody,
+        })
+        if (gemini.ok) break
+
+        const status = gemini.status
         await gemini.body?.cancel()
-        throw new Error(`Gemini request failed with status ${gemini.status}`)
+        const retryable = status === 429 || status >= 500
+        if (!retryable || attempt === MAX_UPSTREAM_ATTEMPTS) {
+          throw new Error(`Gemini request failed with status ${status}`)
+        }
+        await new Promise((resolve) => setTimeout(resolve, 600 * attempt))
       }
+      if (!gemini?.ok) throw new Error('Gemini request failed')
       const data = await gemini.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
       const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? '').join('')
       if (!text) throw new Error('Gemini returned no text')
@@ -187,7 +208,7 @@ export default {
         name: error instanceof Error ? error.name : 'UnknownError',
         message: error instanceof Error ? error.message : 'Unknown error',
       }))
-      return jsonResponse({ error: 'AI service unavailable' }, 502, headers)
+      return jsonResponse({ error: 'AI service unavailable', code: publicErrorCode(error) }, 502, headers)
     }
   },
 }
