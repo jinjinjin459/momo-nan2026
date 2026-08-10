@@ -65,3 +65,14 @@ export async function probeJson(path, extraArgs = []) {
   ])
   return JSON.parse(stdout)
 }
+
+export function parseLeadingBlackEnd(log) {
+  const intervals = [...log.matchAll(/black_start:([\d.]+)\s+black_end:([\d.]+)/g)]
+    .map((match) => ({ start: Number(match[1]), end: Number(match[2]) }))
+  let leadingEnd = 0
+  for (const interval of intervals) {
+    if (interval.start > leadingEnd + 0.15) break
+    leadingEnd = Math.max(leadingEnd, interval.end)
+  }
+  return leadingEnd
+}

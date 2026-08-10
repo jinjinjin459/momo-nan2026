@@ -195,7 +195,7 @@ function ChatScreen({
     <section className="screen chat-screen">
       <div className="chat-profile">
         <CharacterPortrait state={state} compact />
-        <div><b>{state.name}</b><span><span className="live-dot" /> {aiMode === 'live' ? 'Gemma 4 · 26B' : 'Resilient Demo AI'}</span></div>
+        <div><b>{state.name}</b><span><span className="live-dot" /> {aiMode === 'live' ? 'Gemma 4 · 26B' : aiMode === 'ready' ? 'Gemma 4 ready' : 'Resilient Demo AI'}</span></div>
         <span className="bond-mini">Bond {state.bondLevel}</span>
       </div>
 

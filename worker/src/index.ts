@@ -12,7 +12,7 @@ const ALLOWED_TOPICS = new Set(['coding', 'night', 'travel', 'art', 'making'])
 const responseSchema = {
   type: 'object',
   properties: {
-    reply: { type: 'string' },
+    reply: { type: 'string', maxLength: 240 },
     memoryCandidate: {
       anyOf: [
         { type: 'null' },
@@ -48,7 +48,7 @@ const responseSchema = {
 
 const replyOnlySchema = {
   type: 'object',
-  properties: { reply: { type: 'string' } },
+  properties: { reply: { type: 'string', maxLength: 240 } },
   required: ['reply'],
   additionalProperties: false,
 }
@@ -107,8 +107,16 @@ function isStringArray(value: unknown, maxItems: number): value is string[] {
   return Array.isArray(value) && value.length <= maxItems && value.every((item) => typeof item === 'string')
 }
 
+function isValidReply(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const reply = value.trim()
+  if (!reply || reply.length > 240 || /<\/?br\s*\/?>/i.test(reply)) return false
+  if (/(.)\1{7,}/u.test(reply) || /(.{2,16})\1{4,}/u.test(reply)) return false
+  return true
+}
+
 function isValidAiResult(value: unknown) {
-  if (!isRecord(value) || typeof value.reply !== 'string' || value.reply.trim().length === 0) return false
+  if (!isRecord(value) || !isValidReply(value.reply)) return false
   if (!isStringArray(value.topics, 5) || !value.topics.every((topic) => ALLOWED_TOPICS.has(topic))) return false
 
   const memory = value.memoryCandidate
@@ -194,7 +202,7 @@ export default {
         generationConfig: {
           responseMimeType: 'application/json',
           responseJsonSchema: questReplyOnly ? replyOnlySchema : responseSchema,
-          maxOutputTokens: questReplyOnly ? 220 : 700,
+          maxOutputTokens: questReplyOnly ? 220 : 420,
         },
       })
       let result: unknown
@@ -223,7 +231,7 @@ export default {
         } else {
           try {
             const parsed: unknown = JSON.parse(text)
-            if (questReplyOnly && isRecord(parsed) && typeof parsed.reply === 'string' && parsed.reply.trim()) {
+            if (questReplyOnly && isRecord(parsed) && isValidReply(parsed.reply)) {
               result = { reply: parsed.reply, memoryCandidate: null, topics: [], questIntent: null }
             } else if (!questReplyOnly && isValidAiResult(parsed)) {
               result = parsed

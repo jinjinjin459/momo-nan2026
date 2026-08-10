@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-import { probeJson, resolveMediaTool, run } from './video-tools.mjs'
+import { parseLeadingBlackEnd, probeJson, resolveMediaTool, run } from './video-tools.mjs'
 import { verifyVideo } from './video-verify.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
@@ -39,7 +39,7 @@ async function sendCurrentMessage(page) {
       return (state.messages?.length ?? 0) >= expected
     },
     { expected: before + 2 },
-    { timeout: 30_000 },
+    { timeout: 60_000 },
   )
   await wait(page, 350)
 
@@ -168,8 +168,44 @@ try {
     normalizedVideo,
   ], { echo: true })
 
-  await verifyVideo(normalizedVideo, { extractFrames: false })
-  await copyFile(normalizedVideo, outputPath)
+  const nullOutput = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  const blackScan = await run(ffmpeg, [
+    '-hide_banner', '-i', normalizedVideo,
+    '-vf', 'blackdetect=d=0.10:pix_th=0.10:pic_th=0.98',
+    '-an', '-f', 'null', nullOutput,
+  ])
+  const leadingBlackEnd = parseLeadingBlackEnd(blackScan.stderr)
+  let submissionCandidate = normalizedVideo
+
+  if (leadingBlackEnd > 0.5) {
+    const cutStart = Math.min(leadingBlackEnd + 0.1, 10)
+    const remainingSeconds = targetSeconds - cutStart
+    assert(remainingSeconds >= 25, `Initial blank capture is too long: ${leadingBlackEnd}`)
+    const cleanedVideo = join(tempDir, 'momo-40s-no-leading-black.mp4')
+    const cleanedFilter = [
+      `trim=start=${cutStart.toFixed(6)}:duration=${remainingSeconds.toFixed(6)}`,
+      'setpts=PTS-STARTPTS',
+      `setpts=${(targetSeconds / remainingSeconds).toFixed(9)}*PTS`,
+      'fps=30',
+      'tpad=stop_mode=clone:stop_duration=1',
+      `trim=duration=${targetSeconds}`,
+      'setpts=PTS-STARTPTS',
+      'format=yuv420p',
+    ].join(',')
+    await run(ffmpeg, [
+      '-y', '-i', normalizedVideo,
+      '-an', '-vf', cleanedFilter,
+      '-c:v', 'libx264', '-preset', 'medium', '-crf', '19',
+      '-r', '30', '-frames:v', '1200', '-video_track_timescale', '30000',
+      '-movflags', '+faststart',
+      '-metadata', 'comment=MOMO actual Playwright gameplay capture; initial navigation blank removed',
+      cleanedVideo,
+    ], { echo: true })
+    submissionCandidate = cleanedVideo
+  }
+
+  await verifyVideo(submissionCandidate, { extractFrames: false })
+  await copyFile(submissionCandidate, outputPath)
   const report = await verifyVideo(outputPath, { extractFrames: true })
   const outputStat = await stat(outputPath)
   console.log(JSON.stringify({

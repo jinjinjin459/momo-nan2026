@@ -2,7 +2,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { mkdir, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
-import { probeJson, resolveMediaTool, run } from './video-tools.mjs'
+import { parseLeadingBlackEnd, probeJson, resolveMediaTool, run } from './video-tools.mjs'
 
 const scriptDir = dirname(fileURLToPath(import.meta.url))
 const defaultVideo = resolve(scriptDir, '../submission/MOMO_플레이영상_40초.mp4')
@@ -39,8 +39,20 @@ export async function verifyVideo(videoPath, { extractFrames = true } = {}) {
     bytes: size,
   }
 
+  const ffmpeg = await resolveMediaTool('ffmpeg')
+  const nullOutput = process.platform === 'win32' ? 'NUL' : '/dev/null'
+  const blackScan = await run(ffmpeg, [
+    '-hide_banner', '-i', absoluteVideo,
+    '-vf', 'blackdetect=d=0.10:pix_th=0.10:pic_th=0.98',
+    '-an', '-f', 'null', nullOutput,
+  ])
+  const leadingBlackSeconds = parseLeadingBlackEnd(blackScan.stderr)
+  if (leadingBlackSeconds > 0.5) {
+    throw new Error(`Video starts with ${leadingBlackSeconds.toFixed(3)} seconds of black frames`)
+  }
+  report.leadingBlackSeconds = leadingBlackSeconds
+
   if (extractFrames) {
-    const ffmpeg = await resolveMediaTool('ffmpeg')
     const frameDir = join(tmpdir(), `momo-video-frames-${Date.now()}`)
     await mkdir(frameDir, { recursive: true })
     const frames = []

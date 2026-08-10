@@ -156,7 +156,7 @@ export async function getAiResponse(
 
   try {
     const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), 25_000)
+    const timeout = window.setTimeout(() => controller.abort(), 45_000)
     const response = await fetch(`${apiBase.replace(/\/$/, '')}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
