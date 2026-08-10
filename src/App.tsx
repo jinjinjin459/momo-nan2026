@@ -441,8 +441,12 @@ function App() {
 
     const { result, mode } = await getAiResponse(text, snapshot)
     setAiMode(mode)
-    const applied = applyAiResult(snapshot, result, {
-      advanceDemoStep: !isMemoryRecall(text),
+    const recallTurn = isMemoryRecall(text)
+    const gameResult = recallTurn
+      ? { ...result, memoryCandidate: null, topics: [] as typeof result.topics, questIntent: null }
+      : result
+    const applied = applyAiResult(snapshot, gameResult, {
+      advanceDemoStep: !recallTurn,
     })
     const assistantMessage = makeMessage('assistant', result.reply)
     setState({ ...applied.state, messages: [...applied.state.messages, assistantMessage] })

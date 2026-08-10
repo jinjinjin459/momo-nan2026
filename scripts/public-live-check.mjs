@@ -14,8 +14,12 @@ const browser = await chromium.launch({
 })
 const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
 const apiResponses = []
+const failedRequests = []
 page.on('response', (response) => {
   if (response.url().endsWith('/api/chat')) apiResponses.push(response.status())
+})
+page.on('requestfailed', (request) => {
+  if (request.url().endsWith('/api/chat')) failedRequests.push(request.failure()?.errorText ?? 'unknown failure')
 })
 
 const dismissEvents = async () => {
@@ -44,6 +48,12 @@ try {
   await page.getByRole('button', { name: /Momo와 이야기하기/ }).click()
 
   const firstEvents = await send('나는 개발자고 밤에 코딩하는 걸 좋아해.')
+  console.log(JSON.stringify({
+    firstApiResponses: apiResponses,
+    failedRequests,
+    modePills: await page.locator('.mode-pill').allTextContents(),
+    chatStatus: await page.locator('.chat-title-row span').allTextContents(),
+  }))
   await page.getByText('Gemma 4 · 26B').waitFor({ timeout: 3_000 })
   if (!firstEvents.includes('MEMORY DISCOVERED')) throw new Error('Live memory event was not created')
 
@@ -53,6 +63,14 @@ try {
 
   const growthEvents = await send('오늘도 늦게까지 새로운 것을 만들 거야.')
   const afterGrowth = await page.evaluate(() => JSON.parse(localStorage.getItem('momo-nan2026-state-v1') ?? '{}'))
+  console.log(JSON.stringify({
+    growthApiResponses: apiResponses,
+    growthFailedRequests: failedRequests,
+    growthEvents,
+    scores: afterGrowth.evolution?.scores,
+    modePills: await page.locator('.mode-pill').allTextContents(),
+    lastReply: afterGrowth.messages?.at(-1)?.text,
+  }))
   if (afterGrowth.evolution?.current !== 'nightOwl') {
     throw new Error(`Expected Night Owl evolution, got ${afterGrowth.evolution?.current}`)
   }
