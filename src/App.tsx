@@ -18,7 +18,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
-import { getAiResponse } from './ai'
+import { getAiResponse, isMemoryRecall } from './ai'
 import {
   DNA_LABELS,
   EVOLUTION_LABELS,
@@ -102,7 +102,7 @@ function StartScreen({ onStart }: { onStart: () => void }) {
       <motion.button className="primary-button" onClick={onStart} whileTap={{ scale: 0.97 }}>
         Momo 깨우기 <ChevronRight size={18} />
       </motion.button>
-      <p className="start-footnote">게임 상태는 이 브라우저에 저장됩니다. Live AI 사용 시 대화가 Gemini 서버로 전송됩니다.</p>
+      <p className="start-footnote">게임 상태는 이 브라우저에 저장됩니다. Live AI 사용 시 대화가 Google의 Gemma API로 전송됩니다.</p>
     </motion.main>
   )
 }
@@ -115,7 +115,7 @@ function Header({ onReset, aiMode }: { onReset: () => void; aiMode: 'live' | 'de
         <p className="brand-sub">LIFEFORM · DAY 1</p>
       </div>
       <div className="header-actions">
-        <span className={`mode-pill ${aiMode}`}><span className="live-dot" /> {aiMode === 'live' ? 'Gemini Live' : aiMode === 'ready' ? 'AI Ready' : 'Demo Safe'}</span>
+        <span className={`mode-pill ${aiMode}`}><span className="live-dot" /> {aiMode === 'live' ? 'Gemma 4 Live' : aiMode === 'ready' ? 'AI Ready' : 'Demo Safe'}</span>
         <button className="icon-button" onClick={onReset} aria-label="내 데이터 삭제 및 데모 초기화" title="내 데이터 삭제 및 데모 초기화">
           <RotateCcw size={16} />
         </button>
@@ -195,7 +195,7 @@ function ChatScreen({
     <section className="screen chat-screen">
       <div className="chat-profile">
         <CharacterPortrait state={state} compact />
-        <div><b>{state.name}</b><span><span className="live-dot" /> {aiMode === 'live' ? 'Gemini 3.6 Flash' : 'Resilient Demo AI'}</span></div>
+        <div><b>{state.name}</b><span><span className="live-dot" /> {aiMode === 'live' ? 'Gemma 4 · 26B' : 'Resilient Demo AI'}</span></div>
         <span className="bond-mini">Bond {state.bondLevel}</span>
       </div>
 
@@ -441,7 +441,9 @@ function App() {
 
     const { result, mode } = await getAiResponse(text, snapshot)
     setAiMode(mode)
-    const applied = applyAiResult(snapshot, result)
+    const applied = applyAiResult(snapshot, result, {
+      advanceDemoStep: !isMemoryRecall(text),
+    })
     const assistantMessage = makeMessage('assistant', result.reply)
     setState({ ...applied.state, messages: [...applied.state.messages, assistantMessage] })
     setEvents((current) => [...current, ...applied.events])

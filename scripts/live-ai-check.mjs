@@ -12,7 +12,7 @@ await page.getByRole('button', { name: /Momo 깨우기/ }).click()
 await page.getByRole('button', { name: /Momo와 이야기하기/ }).click()
 await page.getByRole('textbox', { name: '메시지' }).fill('나는 개발자고 밤에 코딩하는 것을 좋아해.')
 await page.getByRole('button', { name: '전송' }).click()
-await page.getByText('Gemini 3.6 Flash').waitFor({ timeout: 20_000 })
+await page.getByText('Gemma 4 · 26B').waitFor({ timeout: 20_000 })
 await page.getByText('MEMORY DISCOVERED').waitFor({ timeout: 20_000 })
 
 const state = await page.evaluate(() => JSON.parse(localStorage.getItem('momo-nan2026-state-v1') ?? '{}'))
@@ -20,7 +20,7 @@ if (state.memories?.length !== 1) throw new Error(`Expected one live memory, got
 if (state.messages?.length !== 3) throw new Error(`Expected three messages, got ${state.messages?.length ?? 0}`)
 
 console.log(JSON.stringify({
-  mode: 'Gemini 3.6 Flash',
+  mode: 'Gemma 4 26B A4B IT',
   memory: state.memories[0].text,
   topicsScore: state.evolution.scores,
   reply: state.messages.at(-1).text,

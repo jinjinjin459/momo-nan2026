@@ -3,8 +3,16 @@ main = "src/index.ts"
 compatibility_date = "2026-08-10"
 
 [vars]
-GEMINI_MODEL = "gemini-3.6-flash"
-ALLOWED_ORIGIN = "*"
+GEMINI_MODEL = "gemma-4-26b-a4b-it"
+ALLOWED_ORIGIN = "https://jinjinjin459.github.io"
+
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+[placement]
+mode = "targeted"
+region = "gcp:us-east4"
 
 # Deploy steps:
 # 1. npx wrangler secret put GEMINI_API_KEY --config worker/wrangler.toml

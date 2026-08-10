@@ -23,6 +23,7 @@ export function calculateBond(exp: number) {
 export function applyAiResult(
   state: CharacterState,
   result: AiResult,
+  options: { advanceDemoStep?: boolean } = {},
 ): { state: CharacterState; events: GameEvent[] } {
   const events: GameEvent[] = []
   const next: CharacterState = structuredClone(state)
@@ -72,21 +73,16 @@ export function applyAiResult(
   const previousLevel = next.bondLevel
   next.bondLevel = calculateBond(next.bondExp)
 
-  const highest = Object.entries(next.evolution.scores).sort(([, a], [, b]) => b - a)[0] as [
-    Exclude<CharacterState['evolution']['current'], 'normal'>,
-    number,
-  ]
-
-  if (next.evolution.current === 'normal' && highest[1] >= 30) {
-    next.evolution.current = highest[0]
-    if (!next.personality.includes(EVOLUTION_LABELS[highest[0]])) {
-      next.personality.push(EVOLUTION_LABELS[highest[0]])
+  if (next.evolution.current === 'normal' && next.evolution.scores.nightOwl >= 30) {
+    next.evolution.current = 'nightOwl'
+    if (!next.personality.includes(EVOLUTION_LABELS.nightOwl)) {
+      next.personality.push(EVOLUTION_LABELS.nightOwl)
     }
-    next.mood = highest[0] === 'nightOwl' ? 'Wide awake' : 'Inspired'
+    next.mood = 'Wide awake'
     events.push({
       type: 'evolution',
       title: 'MOMO EVOLVED',
-      detail: EVOLUTION_LABELS[highest[0]],
+      detail: EVOLUTION_LABELS.nightOwl,
     })
   }
 
@@ -124,7 +120,9 @@ export function applyAiResult(
     next.mood = 'Closer to you'
   }
 
-  next.demoStep = Math.min(3, next.demoStep + 1)
+  if (options.advanceDemoStep !== false) {
+    next.demoStep = Math.min(3, next.demoStep + 1)
+  }
   return { state: next, events }
 }
 
@@ -145,9 +143,9 @@ export function completeQuest(
   )
   next.mood = 'Proud of you'
 
-  if (next.evolution.current === 'normal' && next.evolution.scores[quest.rewardType] >= 30) {
-    next.evolution.current = quest.rewardType
-    const trait = EVOLUTION_LABELS[quest.rewardType]
+  if (next.evolution.current === 'normal' && next.evolution.scores.nightOwl >= 30) {
+    next.evolution.current = 'nightOwl'
+    const trait = EVOLUTION_LABELS.nightOwl
     if (!next.personality.includes(trait)) next.personality.push(trait)
   }
 

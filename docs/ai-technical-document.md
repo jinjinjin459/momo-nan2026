@@ -2,7 +2,7 @@
 
 ## 1. AI 활용 개요
 
-MOMO는 Gemini 3.6 Flash를 단순 대화 출력기가 아니라 게임 입력을 해석하는 계층으로 사용합니다. 한 번의 요청으로 다음 네 결과를 구조화해 반환합니다.
+MOMO의 Live AI 경로는 Google Gemini API의 공식 모델 Gemma 4 26B A4B IT(`gemma-4-26b-a4b-it`)를 게임 입력 해석 계층으로 호출하도록 구성되어 있습니다. 한 번의 요청으로 다음 네 결과를 구조화해 반환하도록 설계했습니다.
 
 1. Momo의 캐릭터 대사
 2. 장기 기억 후보
@@ -22,11 +22,11 @@ AI는 의미를 분류하고 후보를 제안하지만, 점수·레벨·진화·
     ├─ 최근 기억 최대 6개를 포함한 Context 구성
     └─ VITE_API_BASE_URL/api/chat 호출 (9초 제한)
         ↓
-서버 측 Gemini 프록시
+서버 측 Google AI 프록시
   ├─ 로컬: server/gemini-proxy.mjs
   └─ 배포: worker/src/index.ts
         ↓
-Gemini 3.6 Flash
+Gemini API / Gemma 4 26B A4B IT
   └─ JSON Schema 기반 Structured Output
         ↓
 클라이언트 Zod 검증
@@ -43,10 +43,10 @@ localStorage에 CharacterState 저장
 
 ## 3. 사용 모델과 호출 방식
 
-- 모델: `gemini-3.6-flash`
+- 구성 모델: Gemma 4 26B A4B IT (`gemma-4-26b-a4b-it`)
 - API: Google Generative Language API `generateContent`
 - 호출 위치: 브라우저가 아닌 서버 측 프록시 또는 Cloudflare Worker
-- 출력 방식: REST enum `APPLICATION_JSON`과 JSON Schema를 이용한 Structured Output
+- 출력 방식: `responseMimeType: application/json`과 `responseJsonSchema`를 이용한 Structured Output
 - 최대 출력 토큰: 700
 - 브라우저 요청 제한 시간: 9초
 
@@ -54,7 +54,7 @@ localStorage에 CharacterState 저장
 
 API 키는 소스, 클라이언트 번들, 문서에 포함하지 않습니다. `VITE_API_BASE_URL`에는 비밀 값이 아니라 프록시의 공개 주소만 들어갑니다.
 
-## 4. Gemini System Instruction 전문
+## 4. Gemma 4 System Instruction 전문
 
 아래 지시문은 `server/gemini-proxy.mjs`와 `worker/src/index.ts`의 `systemInstruction`에 사용되는 내용입니다.
 
@@ -98,7 +98,7 @@ System Instruction과 별도로 현재 메시지 및 캐릭터 상태를 JSON으
 
 ## 5. Structured Output 계약
 
-Gemini의 응답은 다음 구조를 만족해야 합니다.
+Gemma 4의 응답은 다음 구조를 만족해야 합니다.
 
 ```json
 {
@@ -134,7 +134,7 @@ Gemini의 응답은 다음 구조를 만족해야 합니다.
 
 ## 6. Deterministic Evolution Engine
 
-Gemini는 `nightOwl +16` 같은 점수를 직접 결정하지 않습니다. Gemini가 반환한 제한된 topic을 `src/engine.ts`의 고정 규칙에 대응시킵니다.
+Gemma 4는 `nightOwl +16` 같은 점수를 직접 결정하지 않습니다. 모델이 반환한 제한된 topic을 `src/engine.ts`의 고정 규칙에 대응시킵니다.
 
 | Topic | 적용되는 DNA | 1회 증가량 |
 |---|---:|---:|
@@ -156,6 +156,8 @@ Gemini는 `nightOwl +16` 같은 점수를 직접 결정하지 않습니다. Gemi
 
 동점일 때는 엔진 객체에 정의된 순서로 최고 항목이 선택됩니다. 한 번 진화한 뒤 다른 형태로 재진화하는 시스템은 현재 프로토타입 범위에 포함되지 않습니다.
 
+Character DNA 엔진은 Night Owl, Creator, Artist, Explorer 네 트랙과 각 라벨을 계산합니다. 다만 이 제출 빌드에서 전용 진화 이미지와 핵심 데모 동선까지 구현된 형태는 **Night Owl 1종**입니다. Creator, Artist, Explorer는 점수와 성격 라벨로 상태가 표현됩니다.
+
 ### 기억 중복 제거
 
 기억 후보의 공백과 대소문자를 정규화한 뒤 기존 기억과 같은지, 또는 한 문장이 다른 문장에 포함되는지 검사합니다. 중복으로 판단한 기억은 다시 저장하거나 이벤트로 표시하지 않습니다.
@@ -165,20 +167,21 @@ Gemini는 `nightOwl +16` 같은 점수를 직접 결정하지 않습니다. Gemi
 다음 상황에서는 `src/ai.ts`의 규칙 기반 Demo AI가 즉시 또는 자동으로 대신 응답합니다.
 
 - `VITE_API_BASE_URL`이 설정되지 않은 정적 배포
+- URL에 `?demo=1`을 지정해 강제 폴백을 선택한 경우
 - 네트워크 오류
 - 9초 이상 응답 지연
 - 4xx/5xx 서버 응답
 - JSON 파싱 또는 Zod 검증 실패
 
-Demo AI는 한국어·영어 키워드를 topic에 대응시키고, 기억 요청 및 퀘스트 요청 패턴을 규칙으로 분석합니다. 동일한 의미의 데모 입력은 같은 topic, 기억 후보와 퀘스트 의도로 처리되므로 API 상태와 무관하게 핵심 게임 루프를 시연할 수 있습니다. 화면에는 현재 응답 경로가 `Gemini 3.6 Flash` 또는 `Resilient Demo AI`로 표시됩니다.
+Demo AI는 한국어·영어 키워드를 topic에 대응시키고, 기억 요청 및 퀘스트 요청 패턴을 규칙으로 분석합니다. 동일한 의미의 데모 입력은 같은 topic, 기억 후보와 퀘스트 의도로 처리되므로 API 상태와 무관하게 핵심 게임 루프를 시연할 수 있습니다. Live 응답 후 채팅 프로필에는 `Gemma 4 · 26B`가 표시되고, 폴백 중에는 상단에 `Demo Safe`, 채팅 프로필에 `Resilient Demo AI`가 표시됩니다.
 
-프록시는 요청 본문을 32KB 이하로 제한하고 사용자 메시지를 최대 1,200자로 제한합니다. 성공 응답에는 `Cache-Control: no-store`를 적용합니다.
+프록시는 요청 본문을 32KB 이하로 제한하고 사용자 메시지를 최대 1,200자로 제한합니다. `/api/health`는 설정된 모델과 서버 준비 상태를 반환하고, 응답의 `X-Momo-Model` 헤더로 실제 선택 모델을 확인할 수 있습니다. 성공 응답에는 `Cache-Control: no-store`를 적용합니다.
 
 ## 8. 데이터와 개인정보 처리
 
 - CharacterState, 대화, 기억, 퀘스트는 현재 브라우저 `localStorage`에만 저장됩니다.
 - 계정, 서버 데이터베이스, 기기 간 동기화는 없습니다.
-- Gemini 요청에는 현재 메시지, 캐릭터 상태와 최근 기억 최대 여섯 개가 전달됩니다.
+- Gemini API를 통한 Gemma 4 요청에는 현재 메시지, 캐릭터 상태와 최근 기억 최대 여섯 개가 전달됩니다.
 - System Instruction은 민감정보와 일회성 감정을 기억으로 저장하지 않도록 지시합니다.
 - 우측 상단 초기화 버튼으로 로컬 진행 데이터를 삭제할 수 있습니다.
 
@@ -194,7 +197,7 @@ Codex를 다음 작업의 개발 보조 도구로 사용했습니다.
 - CharacterState, Memory, Quest 타입 정의
 - Structured Output의 Zod 및 JSON Schema 설계
 - 규칙 기반 DNA·Bond·진화·보상 엔진 구현
-- Gemini 로컬 프록시와 Cloudflare Worker 구조 작성
+- Gemma 4를 호출하는 Google AI 로컬 프록시와 Cloudflare Worker 구조 작성
 - 모바일 UI 컴포넌트와 Framer Motion 이벤트 연출 구현
 - 빌드, 린트, Playwright 플레이 흐름 확인 및 오류 수정
 - 제출용 설명 문서와 체크리스트 초안 작성

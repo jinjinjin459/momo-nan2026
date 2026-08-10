@@ -30,14 +30,38 @@ const TOPIC_KEYWORDS: Record<Topic, RegExp> = {
   art: /그림|음악|디자인|미술|작곡|draw|music|design/i,
 }
 
+export function isMemoryRecall(message: string) {
+  const explicitTaskRequest =
+    /기억해\s*(?:줘|주세요|둬|놓아|달라)|할 일|해야|리마인드|todo|task|등록해/i.test(message)
+  if (explicitTaskRequest) return false
+
+  return (
+    /(?:내가|나는|나에 대해|내 정보|내 취향).*(?:뭐|뭘|무엇|어떤).*(?:좋아|선호|기억|알고|말했)/i.test(message)
+    || /(?:내가|나는|나에 대해|내 정보|내 취향).*(?:기억나|기억하지|기억해\??|기억하고 있|알고 있|말했지)/i.test(message)
+    || /(?:뭐|뭘|무엇|어떤).*(?:좋아|선호|기억|알고|말했)/i.test(message)
+    || /(?:기억나|기억하지|기억하고 있|알고 있).*(?:나|내|취향|좋아)/i.test(message)
+  )
+}
+
 function mockResult(message: string, state: CharacterState): AiResult {
   const topics = (Object.entries(TOPIC_KEYWORDS) as [Topic, RegExp][])
     .filter(([, pattern]) => pattern.test(message))
     .map(([topic]) => topic)
 
-  const wantsQuest = /기억해|할 일|해야|리마인드|todo|task/i.test(message)
+  const asksMemory = isMemoryRecall(message)
+  const wantsQuest = !asksMemory && /기억해|할 일|해야|리마인드|todo|task/i.test(message)
   const isPreference = /좋아|나는|내가|선호|취미|개발자/i.test(message)
-  const asksMemory = /뭘 좋아|기억|알고 있|나에 대해/i.test(message) && !wantsQuest
+
+  if (asksMemory) {
+    return {
+      reply: state.memories.length > 0
+        ? `물론 기억하지. ${state.memories[0].text} 그래서 네 이야기를 들을수록 나도 조금씩 너를 닮아가고 있어.`
+        : '아직 발견한 기억은 없어. 네가 좋아하는 것이나 자주 하는 일을 들려주면 오래 기억할게.',
+      memoryCandidate: null,
+      topics: [],
+      questIntent: null,
+    }
+  }
 
   if (wantsQuest) {
     const title = message
@@ -65,15 +89,6 @@ function mockResult(message: string, state: CharacterState): AiResult {
             timeLabel,
           }
         : null,
-    }
-  }
-
-  if (asksMemory && state.memories.length > 0) {
-    return {
-      reply: `물론 기억하지. ${state.memories[0].text} 그래서 네 이야기를 들을수록 나도 조금씩 너를 닮아가고 있어.`,
-      memoryCandidate: null,
-      topics,
-      questIntent: null,
     }
   }
 
