@@ -1,6 +1,34 @@
 import { z } from 'zod'
 import type { AiResult, CharacterState, Topic } from './types'
 
+export type AiMode = 'live' | 'demo' | 'ready' | 'connecting' | 'fallback'
+
+const isForcedDemo = () => new URLSearchParams(window.location.search).get('demo') === '1'
+const getApiBase = () => (import.meta.env.VITE_API_BASE_URL as string | undefined)?.replace(/\/$/, '')
+
+export function getInitialAiMode(): AiMode {
+  return !isForcedDemo() && getApiBase() ? 'ready' : 'demo'
+}
+
+export async function checkAiConnection(): Promise<AiMode> {
+  if (isForcedDemo() || !getApiBase()) return 'demo'
+
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 7_000)
+  try {
+    const response = await fetch(`${getApiBase()}/api/health`, {
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: controller.signal,
+    })
+    return response.ok ? 'ready' : 'fallback'
+  } catch {
+    return 'fallback'
+  } finally {
+    window.clearTimeout(timeout)
+  }
+}
+
 const responseSchema = z.object({
   reply: z.string().min(1),
   memoryCandidate: z
@@ -148,23 +176,28 @@ function buildContext(message: string, state: CharacterState) {
 export async function getAiResponse(
   message: string,
   state: CharacterState,
-): Promise<{ result: AiResult; mode: 'live' | 'demo' }> {
-  const forceDemo = new URLSearchParams(window.location.search).get('demo') === '1'
-  if (forceDemo) return { result: mockResult(message, state), mode: 'demo' }
-  const apiBase = import.meta.env.VITE_API_BASE_URL as string | undefined
+): Promise<{ result: AiResult; mode: 'live' | 'demo' | 'fallback'; errorCode?: string }> {
+  if (isForcedDemo()) return { result: mockResult(message, state), mode: 'demo' }
+  const apiBase = getApiBase()
   if (!apiBase) return { result: mockResult(message, state), mode: 'demo' }
 
+  const controller = new AbortController()
+  const timeout = window.setTimeout(() => controller.abort(), 32_000)
   try {
-    const controller = new AbortController()
-    const timeout = window.setTimeout(() => controller.abort(), 45_000)
-    const response = await fetch(`${apiBase.replace(/\/$/, '')}/api/chat`, {
+    const response = await fetch(`${apiBase}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(buildContext(message, state)),
       signal: controller.signal,
     })
-    window.clearTimeout(timeout)
-    if (!response.ok) throw new Error(`AI request failed: ${response.status}`)
+    if (!response.ok) {
+      const errorBody = await response.json().catch(() => null) as { code?: string } | null
+      return {
+        result: mockResult(message, state),
+        mode: 'fallback',
+        errorCode: errorBody?.code ?? `HTTP_${response.status}`,
+      }
+    }
     const parsed = responseSchema.parse(await response.json())
     const deterministicFallback = mockResult(message, state)
     return {
@@ -176,7 +209,15 @@ export async function getAiResponse(
       },
       mode: 'live',
     }
-  } catch {
-    return { result: mockResult(message, state), mode: 'demo' }
+  } catch (error) {
+    return {
+      result: mockResult(message, state),
+      mode: 'fallback',
+      errorCode: error instanceof DOMException && error.name === 'AbortError'
+        ? 'CLIENT_TIMEOUT'
+        : 'NETWORK_ERROR',
+    }
+  } finally {
+    window.clearTimeout(timeout)
   }
 }

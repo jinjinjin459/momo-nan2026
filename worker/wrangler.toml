@@ -3,7 +3,7 @@ main = "src/index.ts"
 compatibility_date = "2026-08-10"
 
 [vars]
-GEMINI_MODEL = "gemma-4-26b-a4b-it"
+GEMINI_MODEL = "gemini-3.6-flash"
 ALLOWED_ORIGIN = "https://jinjinjin459.github.io"
 
 [observability]
@@ -15,6 +15,6 @@ mode = "targeted"
 region = "gcp:us-east4"
 
 # Deploy steps:
-# 1. npx wrangler secret put GEMINI_API_KEY --config worker/wrangler.toml
+# 1. npx wrangler secret put GEMINI_API_KEYS --config worker/wrangler.toml
 # 2. npx wrangler deploy --config worker/wrangler.toml
 # 3. Build the web app with VITE_API_BASE_URL set to the Worker URL.

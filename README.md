@@ -22,12 +22,15 @@
 
 1. `나는 개발자고 밤에 코딩하는 걸 좋아해.`
 2. `오늘도 늦게까지 새로운 걸 만들 거야.`
-3. `오늘 밤 11시에 NAN 발표 자료 만들기 기억해줘.`
-4. Quests 탭에서 생성된 퀘스트를 완료합니다.
+3. `밤에 집중해서 코딩하면 아이디어가 더 잘 떠올라.`
+4. 두 번 더 대화해 Bond Lv.3을 달성합니다.
+5. DNA 탭에서 해금된 진화를 직접 선택합니다.
+6. `오늘 밤 11시에 NAN 발표 자료 만들기 기억해줘.`
+7. Quests 탭에서 생성된 퀘스트를 완료합니다.
 
-첫 진화, Quest Keeper 해금, 첫 현실 퀘스트 완료 후 `DEMO COMPLETE`가 나타나면 프로토타입의 핵심 여정을 완주한 것입니다.
+진화 조건은 `Bond Lv.3 + 해당 DNA 30 + 관련 대화/퀘스트 공명 3회`입니다. 첫 진화 선택, Quest Keeper 해금, 현실 퀘스트 완료 후 `QUEST COMPLETE`가 나타나면 핵심 여정을 완주한 것입니다.
 
-Character DNA는 Night Owl, Creator, Artist, Explorer 네 성장 트랙을 계산합니다. 이 제출 빌드에서 전용 외형까지 구현된 핵심 진화는 **Night Owl 1종**이며, 나머지 트랙은 DNA 점수와 성격 라벨로 표현됩니다.
+Character DNA는 Night Owl, Creator, Artist, Explorer 네 성장 트랙을 계산하며 네 진화 모두 해금·선택할 수 있습니다. 전용 이미지 외형은 Night Owl에 적용되고, 나머지 형태는 컬러 공명과 성격 라벨로 표현됩니다.
 
 ## Screens
 
@@ -37,16 +40,16 @@ Character DNA는 Night Owl, Creator, Artist, Explorer 네 성장 트랙을 계�
 
 ## AI architecture
 
-공개 Live AI는 Google Gemini API의 공식 모델 Gemma 4 26B A4B IT(`gemma-4-26b-a4b-it`)를 호출합니다. 일반 대화와 Memory는 한 번의 전체 Structured Output으로 처리합니다. Quest 요청은 Gemma 4가 축소된 `{ reply }` 스키마로 Momo의 답변을 만들고, 클라이언트의 결정론적 intent parser가 title과 time을 보완합니다. 실제 DNA 점수·Bond·진화·보상은 항상 `src/engine.ts`의 규칙이 계산합니다.
+공개 Live AI는 Google Gemini API의 `gemini-3.6-flash`를 호출합니다. 일반 대화와 Memory는 한 번의 전체 Structured Output으로 처리합니다. Quest 요청은 축소된 `{ reply }` 스키마로 Momo의 답변을 만들고, 클라이언트의 결정론적 intent parser가 title과 time을 보완합니다. 실제 DNA 점수·Bond·진화·보상은 항상 `src/engine.ts`의 규칙이 계산합니다.
 
 ```text
-Browser → Cloudflare Worker → Gemini API / Gemma 4 26B A4B IT
+Browser → Cloudflare Worker → Gemini API / Gemini 3.6 Flash
         ← full structured JSON (Chat / Memory)
         ← { reply } + deterministic intent parser (Quest)
         → deterministic game engine → localStorage
 ```
 
-API 키는 브라우저 번들에 포함하지 않습니다. 공개 기본 URL은 배포된 Worker를 통해 Gemma 4 Live AI를 사용합니다. 일시적인 429·5xx 응답이나 잘못된 JSON은 Worker에서 최대 3회까지만 재시도합니다. 45초 안에 유효한 응답을 받지 못하면 화면에 `Demo Safe`를 표시하고 규칙 기반 Demo AI가 전체 게임 루프를 이어갑니다. `?demo=1`은 심사 중 네트워크 장애에 대비한 강제 폴백 경로입니다.
+API 키는 브라우저 번들에 포함하지 않습니다. Worker는 `GEMINI_API_KEYS` secret의 여러 키를 순환하며 일시적인 429·5xx·타임아웃 또는 잘못된 JSON을 최대 3회 재시도합니다. 각 upstream 시도는 12초, 브라우저 요청은 32초로 제한됩니다. 실패한 답변은 `Offline Fallback`으로 명확히 표시하고 다음 메시지에서 자동 재연결합니다. `?demo=1`은 강제 Demo Safe 경로입니다.
 
 제출용 MP4는 공개 기본 URL의 Live AI만 사용한 실제 플레이를 녹화한 40.000초 영상입니다. H.264, 720×1280, 30fps, 1,200프레임이며 AI 영상 합성이나 Demo fallback 장면을 포함하지 않습니다.
 
@@ -59,11 +62,11 @@ npm ci
 npm run dev
 ```
 
-Gemma 4 Live Mode(Gemini API):
+Gemini 3.6 Flash Live Mode(Gemini API):
 
 ```powershell
 Copy-Item .env.example .env.local
-# .env.local의 GEMINI_API_KEY를 서버 전용 키로 설정합니다.
+# .env.local의 GEMINI_API_KEYS를 쉼표로 구분한 서버 전용 키 묶음으로 설정합니다.
 ```
 
 첫 번째 터미널:
@@ -85,12 +88,14 @@ npm run dev -- --host 127.0.0.1 --port 4627
 ```bash
 npm run build
 npm run lint
+npm test
 npm run check:play
+npm run check:fallback
 node scripts/live-ai-check.mjs
 node scripts/public-live-check.mjs
 ```
 
-`check:play`은 Chrome 모바일 뷰포트에서 시작 → 기억 → 진화 → 능력 해금 → 퀘스트 → 완료 보상을 실제로 클릭해 검증합니다. `live-ai-check`는 로컬 프록시의 Gemma 4 응답을 확인합니다. `public-live-check`는 공개 URL에서 기억 회상 → Night Owl 진화 → Quest 완료 → 새로고침 후 상태 유지까지 확인합니다. 공개 Live 검증은 두 번 연속 네 요청 모두 `[200, 200, 200, 200]`으로 통과했습니다.
+`check:play`은 Chrome 모바일 뷰포트에서 시작 → 기억 → 복합 진화 조건 → 진화 선택 → 퀘스트 → 완료 보상을 실제로 클릭해 검증합니다. `live-ai-check`는 로컬 프록시의 Gemini 3.6 Flash 응답을 확인합니다. `public-live-check`는 공개 URL에서 기억 회상 → 진화 선택 → Quest 완료 → 새로고침 후 상태 유지와 요청 진단 헤더까지 확인합니다.
 
 ## Documentation
 
@@ -101,7 +106,7 @@ node scripts/public-live-check.mjs
 
 ## Stack
 
-React 19 · TypeScript 6 · Vite 8 · Framer Motion · Zod · Lucide React · Gemma 4 26B A4B IT · Gemini API · Cloudflare Workers · Playwright
+React 19 · TypeScript 6 · Vite 8 · Framer Motion · Zod · Lucide React · Gemini 3.6 Flash · Gemini API · Cloudflare Workers · Playwright · Vitest
 
 ## Data and safety
 

@@ -2,6 +2,8 @@ export type Screen = 'home' | 'chat' | 'dna' | 'quests'
 
 export type EvolutionType = 'normal' | 'nightOwl' | 'creator' | 'artist' | 'explorer'
 
+export type EvolutionPath = Exclude<EvolutionType, 'normal'>
+
 export type Topic = 'coding' | 'night' | 'travel' | 'art' | 'making'
 
 export type Ability = 'chat' | 'memory' | 'quest'
@@ -43,7 +45,9 @@ export interface CharacterState {
   memories: Memory[]
   evolution: {
     current: EvolutionType
-    scores: Record<Exclude<EvolutionType, 'normal'>, number>
+    scores: Record<EvolutionPath, number>
+    signals: Record<EvolutionPath, number>
+    unlocked: EvolutionPath[]
   }
   abilities: Ability[]
   quests: Quest[]
@@ -70,7 +74,7 @@ export interface AiResult {
 }
 
 export interface GameEvent {
-  type: 'memory' | 'evolution' | 'ability' | 'quest' | 'reward'
+  type: 'memory' | 'evolution' | 'evolutionReady' | 'ability' | 'quest' | 'reward'
   title: string
   detail: string
 }

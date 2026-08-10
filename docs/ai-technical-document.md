@@ -2,14 +2,14 @@
 
 ## 1. AI 활용 개요
 
-MOMO의 공개 Live AI 경로는 Google Gemini API의 공식 모델 Gemma 4 26B A4B IT(`gemma-4-26b-a4b-it`)를 게임 입력 해석 계층으로 사용합니다. 일반 대화와 Memory 요청은 한 번의 전체 Structured Output으로 다음 네 결과를 반환합니다.
+MOMO의 공개 Live AI 경로는 Google Gemini API의 `gemini-3.6-flash`를 게임 입력 해석 계층으로 사용합니다. 일반 대화와 Memory 요청은 한 번의 전체 Structured Output으로 다음 네 결과를 반환합니다.
 
 1. Momo의 캐릭터 대사
 2. 장기 기억 후보
 3. 현재 대화에 포함된 성장 주제
 4. 현실 퀘스트 생성 의도
 
-Quest 요청은 별도 경량 경로를 사용합니다. Gemma 4는 축소된 `{ reply }` 스키마로 캐릭터 답변을 생성하고, 클라이언트의 결정론적 intent parser가 퀘스트 title과 time을 보완합니다. AI는 의미와 표현을 담당하지만, 점수·레벨·진화·보상처럼 게임 결과에 직접 영향을 주는 계산은 TypeScript 규칙 엔진이 결정합니다. 이 분리는 자연스러운 대화와 재현 가능한 게임 규칙을 동시에 확보하기 위한 설계입니다.
+Quest 요청은 별도 경량 경로를 사용합니다. Gemini 3.6 Flash는 축소된 `{ reply }` 스키마로 캐릭터 답변을 생성하고, 클라이언트의 결정론적 intent parser가 퀘스트 title과 time을 보완합니다. AI는 의미와 표현을 담당하지만, 점수·레벨·진화·보상처럼 게임 결과에 직접 영향을 주는 계산은 TypeScript 규칙 엔진이 결정합니다. 이 분리는 자연스러운 대화와 재현 가능한 게임 규칙을 동시에 확보하기 위한 설계입니다.
 
 ## 2. 전체 구조
 
@@ -20,13 +20,13 @@ Quest 요청은 별도 경량 경로를 사용합니다. Gemma 4는 축소된 `{
         ↓
   src/ai.ts
     ├─ 최근 기억 최대 6개를 포함한 Context 구성
-    └─ VITE_API_BASE_URL/api/chat 호출 (45초 제한)
+    └─ VITE_API_BASE_URL/api/chat 호출 (32초 제한)
         ↓
 서버 측 Google AI 프록시
   ├─ 로컬: server/gemini-proxy.mjs
   └─ 배포: worker/src/index.ts
         ↓
-Gemini API / Gemma 4 26B A4B IT
+Gemini API / Gemini 3.6 Flash
   ├─ Chat·Memory: 전체 JSON Schema
   └─ Quest: 축소 { reply } Schema
         ↓
@@ -45,12 +45,14 @@ localStorage에 CharacterState 저장
 
 ## 3. 사용 모델과 호출 방식
 
-- 구성 모델: Gemma 4 26B A4B IT (`gemma-4-26b-a4b-it`)
+- 구성 모델: Gemini 3.6 Flash (`gemini-3.6-flash`)
 - API: Google Generative Language API `generateContent`
 - 호출 위치: 브라우저가 아닌 서버 측 프록시 또는 Cloudflare Worker
 - 출력 방식: `responseMimeType: application/json`과 `responseJsonSchema`를 이용한 Structured Output
 - 최대 출력 토큰: 일반 요청 700, Quest 답변 220
-- 브라우저 요청 제한 시간: 45초
+- 브라우저 요청 제한 시간: 32초
+- upstream 시도별 제한 시간: 12초
+- `GEMINI_API_KEYS` 다중 키 failover: 최대 3회
 
 로컬 프록시는 `GEMINI_API_KEY` 또는 서버 전용 `GEMINI_API_KEYS`를 읽습니다. 배포용 Worker는 Cloudflare secret `GEMINI_API_KEY`를 사용합니다. 배포 Worker는 일시적인 429·5xx 응답, JSON 파싱 실패 또는 스키마 검증 실패를 최대 3회까지만 재시도하며, 재시도 사이에는 제한된 지연을 둡니다. 재시도 대상이 아닌 4xx 응답은 즉시 실패 처리합니다.
 
@@ -60,7 +62,7 @@ API 키는 소스, 클라이언트 번들, 문서에 포함하지 않습니다. 
 
 공개 GitHub Pages에서 기억 생성·회상 → Night Owl 진화 → Quest 생성·완료 → 새로고침 후 상태 유지를 실제 브라우저로 검증했습니다. 이 전체 흐름을 두 번 연속 실행했고, 각 실행에서 네 번의 `/api/chat` 응답이 모두 `[200, 200, 200, 200]`이었습니다.
 
-## 4. Gemma 4 System Instruction 전문
+## 4. Gemini 3.6 Flash System Instruction 전문
 
 아래 지시문은 `server/gemini-proxy.mjs`와 `worker/src/index.ts`의 `systemInstruction`에 사용되는 내용입니다.
 
@@ -121,7 +123,7 @@ System Instruction과 별도로 현재 메시지 및 캐릭터 상태를 JSON으
 
 ### 일반 대화와 Memory
 
-일반 대화와 Memory에서 Gemma 4의 응답은 다음 전체 구조를 만족해야 합니다.
+일반 대화와 Memory에서 Gemini 3.6 Flash의 응답은 다음 전체 구조를 만족해야 합니다.
 
 ```json
 {
@@ -139,7 +141,7 @@ System Instruction과 별도로 현재 메시지 및 캐릭터 상태를 JSON으
 
 ### Quest 요청
 
-Quest 능력이 해금된 상태에서 명시적인 할 일 요청을 감지하면 Worker는 출력 스키마를 `{ reply }`로 축소하고 최대 출력 토큰을 220으로 낮춥니다. 이때 Gemma 4가 직접 생성하는 결과는 캐릭터 답변뿐입니다.
+Quest 능력이 해금된 상태에서 명시적인 할 일 요청을 감지하면 Worker는 출력 스키마를 `{ reply }`로 축소하고 최대 출력 토큰을 220으로 낮춥니다. 이때 Gemini 3.6 Flash가 직접 생성하는 결과는 캐릭터 답변뿐입니다.
 
 ```json
 {
@@ -178,7 +180,7 @@ Worker는 이 응답을 클라이언트 공통 스키마에 맞게 확장합니�
 
 ## 6. Deterministic Evolution Engine
 
-Gemma 4는 `nightOwl +16` 같은 점수를 직접 결정하지 않습니다. 모델이 반환한 제한된 topic을 `src/engine.ts`의 고정 규칙에 대응시킵니다.
+Gemini 3.6 Flash는 `nightOwl +16` 같은 점수를 직접 결정하지 않습니다. 모델이 반환한 제한된 topic을 `src/engine.ts`의 고정 규칙에 대응시킵니다.
 
 | Topic | 적용되는 DNA | 1회 증가량 |
 |---|---:|---:|
@@ -213,19 +215,19 @@ Character DNA 엔진은 Night Owl, Creator, Artist, Explorer 네 트랙과 각 �
 - `VITE_API_BASE_URL`이 설정되지 않은 정적 배포
 - URL에 `?demo=1`을 지정해 강제 폴백을 선택한 경우
 - 네트워크 오류
-- 45초 이상 응답 지연
+- 32초 이상 응답 지연
 - 4xx/5xx 서버 응답
 - JSON 파싱 또는 Zod 검증 실패
 
-Demo AI는 한국어·영어 키워드를 topic에 대응시키고, 기억 요청 및 퀘스트 요청 패턴을 규칙으로 분석합니다. 동일한 의미의 데모 입력은 같은 topic, 기억 후보와 퀘스트 의도로 처리되므로 API 상태와 무관하게 핵심 게임 루프를 시연할 수 있습니다. Live 응답 후 채팅 프로필에는 `Gemma 4 · 26B`가 표시되고, 폴백 중에는 상단에 `Demo Safe`, 채팅 프로필에 `Resilient Demo AI`가 표시됩니다.
+Demo AI는 한국어·영어 키워드를 topic에 대응시키고, 기억 요청 및 퀘스트 요청 패턴을 규칙으로 분석합니다. 동일한 의미의 데모 입력은 같은 topic, 기억 후보와 퀘스트 의도로 처리되므로 API 상태와 무관하게 핵심 게임 루프를 시연할 수 있습니다. Live 응답 후 채팅 프로필에는 `Gemini 3.6 Flash`가 표시되고, 자동 폴백 중에는 `Offline Fallback`, 강제 데모에서는 `Demo Safe`가 표시됩니다.
 
-프록시는 요청 본문을 32KB 이하로 제한하고 사용자 메시지를 최대 1,200자로 제한합니다. `/api/health`는 설정된 모델과 서버 준비 상태를 반환하고, 응답의 `X-Momo-Model` 헤더로 실제 선택 모델을 확인할 수 있습니다. 성공 응답에는 `Cache-Control: no-store`를 적용합니다. Worker 재시도가 모두 실패하거나 클라이언트의 45초 제한을 넘으면 Demo AI로 전환합니다.
+프록시는 요청 본문을 32KB 이하로 제한하고 사용자 메시지를 최대 1,200자로 제한합니다. `/api/health`는 설정된 모델과 서버 준비 상태를 반환합니다. 응답의 `X-Momo-Model`, `X-Momo-Attempts`, `X-Momo-Request-Id`, `Server-Timing` 헤더로 모델·재시도·요청 ID·소요 시간을 확인할 수 있습니다. 성공 응답에는 `Cache-Control: no-store`를 적용합니다. Worker 재시도가 모두 실패하거나 클라이언트의 32초 제한을 넘으면 Offline Fallback으로 전환합니다.
 
 ## 8. 데이터와 개인정보 처리
 
 - CharacterState, 대화, 기억, 퀘스트는 현재 브라우저 `localStorage`에만 저장됩니다.
 - 계정, 서버 데이터베이스, 기기 간 동기화는 없습니다.
-- Gemini API를 통한 Gemma 4 요청에는 현재 메시지, 캐릭터 상태와 최근 기억 최대 여섯 개가 전달됩니다.
+- Gemini API 요청에는 현재 메시지, 캐릭터 상태와 최근 기억 최대 여섯 개가 전달됩니다.
 - System Instruction은 민감정보와 일회성 감정을 기억으로 저장하지 않도록 지시합니다.
 - 우측 상단 초기화 버튼으로 로컬 진행 데이터를 삭제할 수 있습니다.
 
@@ -241,7 +243,7 @@ Codex를 다음 작업의 개발 보조 도구로 사용했습니다.
 - CharacterState, Memory, Quest 타입 정의
 - Structured Output의 Zod 및 JSON Schema 설계
 - 규칙 기반 DNA·Bond·진화·보상 엔진 구현
-- Gemma 4를 호출하는 Google AI 로컬 프록시와 Cloudflare Worker 구조 작성
+- Gemini 3.6 Flash를 호출하는 Google AI 로컬 프록시와 Cloudflare Worker 구조 작성
 - 모바일 UI 컴포넌트와 Framer Motion 이벤트 연출 구현
 - 빌드, 린트, Playwright 플레이 흐름 확인 및 오류 수정
 - 제출용 설명 문서와 체크리스트 초안 작성

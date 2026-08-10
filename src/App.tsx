@@ -18,17 +18,19 @@ import {
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
 import './App.css'
-import { getAiResponse, isMemoryRecall } from './ai'
+import { checkAiConnection, getAiResponse, getInitialAiMode, isMemoryRecall } from './ai'
+import type { AiMode } from './ai'
 import {
   DNA_LABELS,
+  EVOLUTION_DESCRIPTIONS,
   EVOLUTION_LABELS,
   FUTURE_ABILITIES,
   INITIAL_STATE,
   STORAGE_KEY,
   SUGGESTED_MESSAGES,
 } from './data'
-import { applyAiResult, completeQuest } from './engine'
-import type { CharacterState, GameEvent, Message, Screen } from './types'
+import { applyAiResult, chooseEvolution, completeQuest, getEvolutionProgress } from './engine'
+import type { CharacterState, EvolutionPath, GameEvent, Message, Screen } from './types'
 
 const cloneInitialState = (): CharacterState => structuredClone(INITIAL_STATE)
 
@@ -53,6 +55,15 @@ function loadState() {
           ...initial.evolution.scores,
           ...(parsed.evolution?.scores ?? {}),
         },
+        signals: {
+          ...initial.evolution.signals,
+          ...(parsed.evolution?.signals ?? {}),
+        },
+        unlocked: Array.isArray(parsed.evolution?.unlocked)
+          ? parsed.evolution.unlocked
+          : parsed.evolution?.current && parsed.evolution.current !== 'normal'
+            ? [parsed.evolution.current]
+            : [],
       },
     }
   } catch {
@@ -68,12 +79,14 @@ const makeMessage = (role: Message['role'], text: string): Message => ({
 })
 
 function CharacterPortrait({ state, compact = false }: { state: CharacterState; compact?: boolean }) {
-  const evolved = state.evolution.current === 'nightOwl'
-  const src = evolved ? './assets/momo-night-owl.png' : './assets/momo-awake.png'
+  const evolved = state.evolution.current !== 'normal'
+  const src = state.evolution.current === 'nightOwl'
+    ? './assets/momo-night-owl.png'
+    : './assets/momo-awake.png'
 
   return (
     <motion.div
-      className={`character-portrait ${compact ? 'compact' : ''} ${evolved ? 'evolved' : ''}`}
+      className={`character-portrait evolution-${state.evolution.current} ${compact ? 'compact' : ''} ${evolved ? 'evolved' : ''}`}
       animate={{ y: compact ? [0, -3, 0] : [0, -8, 0], rotate: [0, -0.7, 0.7, 0] }}
       transition={{ duration: 5.2, repeat: Infinity, ease: 'easeInOut' }}
     >
@@ -102,12 +115,20 @@ function StartScreen({ onStart }: { onStart: () => void }) {
       <motion.button className="primary-button" onClick={onStart} whileTap={{ scale: 0.97 }}>
         Momo 깨우기 <ChevronRight size={18} />
       </motion.button>
-      <p className="start-footnote">게임 상태는 이 브라우저에 저장됩니다. Live AI 사용 시 대화가 Google의 Gemma API로 전송됩니다.</p>
+      <p className="start-footnote">게임 상태는 이 브라우저에 저장됩니다. Live AI 사용 시 대화가 Google Gemini API로 전송됩니다.</p>
     </motion.main>
   )
 }
 
-function Header({ onReset, aiMode }: { onReset: () => void; aiMode: 'live' | 'demo' | 'ready' }) {
+const AI_MODE_LABELS: Record<AiMode, string> = {
+  live: 'Gemini 3.6 Live',
+  ready: 'AI Online',
+  connecting: 'Connecting…',
+  fallback: 'Offline Fallback',
+  demo: 'Demo Safe',
+}
+
+function Header({ onReset, aiMode }: { onReset: () => void; aiMode: AiMode }) {
   return (
     <header className="app-header">
       <div>
@@ -115,7 +136,7 @@ function Header({ onReset, aiMode }: { onReset: () => void; aiMode: 'live' | 'de
         <p className="brand-sub">LIFEFORM · DAY 1</p>
       </div>
       <div className="header-actions">
-        <span className={`mode-pill ${aiMode}`}><span className="live-dot" /> {aiMode === 'live' ? 'Gemma 4 Live' : aiMode === 'ready' ? 'AI Ready' : 'Demo Safe'}</span>
+        <span className={`mode-pill ${aiMode}`}><span className="live-dot" /> {AI_MODE_LABELS[aiMode]}</span>
         <button className="icon-button" onClick={onReset} aria-label="내 데이터 삭제 및 데모 초기화" title="내 데이터 삭제 및 데모 초기화">
           <RotateCcw size={16} />
         </button>
@@ -173,7 +194,7 @@ function ChatScreen({
   state: CharacterState
   onSend: (message: string) => Promise<void>
   sending: boolean
-  aiMode: 'live' | 'demo' | 'ready'
+  aiMode: AiMode
 }) {
   const [input, setInput] = useState('')
   const endRef = useRef<HTMLDivElement>(null)
@@ -195,7 +216,7 @@ function ChatScreen({
     <section className="screen chat-screen">
       <div className="chat-profile">
         <CharacterPortrait state={state} compact />
-        <div><b>{state.name}</b><span><span className="live-dot" /> {aiMode === 'live' ? 'Gemma 4 · 26B' : aiMode === 'ready' ? 'Gemma 4 ready' : 'Resilient Demo AI'}</span></div>
+        <div><b>{state.name}</b><span><span className="live-dot" /> {aiMode === 'live' ? 'Gemini 3.6 Flash' : aiMode === 'connecting' ? 'AI 응답을 기다리는 중' : aiMode === 'ready' ? 'Gemini 연결됨' : 'Resilient Demo AI'}</span></div>
         <span className="bond-mini">Bond {state.bondLevel}</span>
       </div>
 
@@ -223,6 +244,7 @@ function ChatScreen({
 
       <div className="chat-composer-wrap">
         {aiMode === 'demo' && <p className="demo-notice">안전한 Demo AI가 플레이 흐름을 이어가고 있어요.</p>}
+        {aiMode === 'fallback' && <p className="demo-notice error">이번 답변은 오프라인 모드예요. 다음 메시지에서 자동으로 다시 연결해요.</p>}
         {!sending && (
           <button className="suggestion-chip" onClick={() => setInput(suggestion)}>
             <Sparkles size={13} /> {suggestion}
@@ -243,11 +265,14 @@ function ChatScreen({
   )
 }
 
-function DnaScreen({ state }: { state: CharacterState }) {
-  const scoreEntries = Object.entries(state.evolution.scores) as Array<[
-    keyof typeof state.evolution.scores,
-    number,
-  ]>
+function DnaScreen({
+  state,
+  onEvolve,
+}: {
+  state: CharacterState
+  onEvolve: (type: EvolutionPath) => void
+}) {
+  const scoreEntries = Object.entries(state.evolution.scores) as Array<[EvolutionPath, number]>
   return (
     <motion.section className="screen dna-screen" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }}>
       <div className="section-heading">
@@ -266,15 +291,31 @@ function DnaScreen({ state }: { state: CharacterState }) {
         <Dna size={24} />
       </div>
 
-      <article className="panel">
-        <div className="panel-title"><span>DNA RESONANCE</span><small>Evolution at 30</small></div>
+      <article className="panel evolution-panel">
+        <div className="panel-title"><span>EVOLUTION PATHS</span><small>Bond · DNA · Resonance</small></div>
         <div className="score-list">
-          {scoreEntries.map(([key, value]) => (
-            <div className="score-row" key={key}>
-              <div><span>{DNA_LABELS[key]}</span><b>{value}</b></div>
-              <div className="score-track"><motion.i animate={{ width: `${value}%` }} /></div>
-            </div>
-          ))}
+          {scoreEntries.map(([key, value]) => {
+            const progress = getEvolutionProgress(state, key)
+            const unlocked = state.evolution.unlocked.includes(key)
+            return (
+              <div className={`score-row evolution-path ${unlocked ? 'ready' : ''}`} key={key}>
+                <div><span>{DNA_LABELS[key]}</span><b>{value} DNA</b></div>
+                <div className="score-track"><motion.i animate={{ width: `${value}%` }} /></div>
+                <p>{EVOLUTION_DESCRIPTIONS[key]}</p>
+                <div className="requirement-list">
+                  <span className={progress.bond.complete ? 'complete' : ''}>Bond {progress.bond.current}/{progress.bond.required}</span>
+                  <span className={progress.dna.complete ? 'complete' : ''}>DNA {progress.dna.current}/{progress.dna.required}</span>
+                  <span className={progress.signals.complete ? 'complete' : ''}>공명 {progress.signals.current}/{progress.signals.required}</span>
+                </div>
+                {state.evolution.current === 'normal' && unlocked && (
+                  <button className="evolve-button" onClick={() => onEvolve(key)}>
+                    {DNA_LABELS[key]}로 진화하기 <Sparkles size={14} />
+                  </button>
+                )}
+                {state.evolution.current === key && <span className="current-evolution"><Check size={13} /> CURRENT FORM</span>}
+              </div>
+            )
+          })}
         </div>
       </article>
 
@@ -404,6 +445,7 @@ function EventOverlay({ event, state, onClose }: { event: GameEvent; state: Char
         <h2>{event.detail}</h2>
         <p className="event-copy">
           {event.type === 'memory' && 'Momo의 DNA에 당신의 기억이 새겨졌어요.'}
+          {event.type === 'evolutionReady' && 'DNA 화면에서 원하는 진화를 직접 선택할 수 있어요.'}
           {event.type === 'evolution' && '당신과 보낸 시간이 Momo를 새로운 모습으로 변화시켰어요.'}
           {event.type === 'ability' && '관계가 깊어져 Momo가 새로운 방식으로 도울 수 있어요.'}
           {event.type === 'quest' && '완료하면 Bond와 Character DNA가 함께 성장해요.'}
@@ -420,11 +462,17 @@ function App() {
   const [screen, setScreen] = useState<Screen>('home')
   const [sending, setSending] = useState(false)
   const [events, setEvents] = useState<GameEvent[]>([])
-  const [aiMode, setAiMode] = useState<'live' | 'demo' | 'ready'>(
-    import.meta.env.VITE_API_BASE_URL && new URLSearchParams(window.location.search).get('demo') !== '1'
-      ? 'ready'
-      : 'demo',
-  )
+  const [aiMode, setAiMode] = useState<AiMode>(getInitialAiMode)
+
+  useEffect(() => {
+    let active = true
+    void checkAiConnection().then((mode) => {
+      if (active) setAiMode(mode)
+    })
+    return () => {
+      active = false
+    }
+  }, [])
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
@@ -435,6 +483,7 @@ function App() {
   const sendMessage = async (text: string) => {
     if (sending) return
     setSending(true)
+    setAiMode((current) => current === 'demo' ? current : 'connecting')
     const userMessage = makeMessage('user', text)
     const snapshot = { ...state, messages: [...state.messages, userMessage] }
     setState(snapshot)
@@ -456,6 +505,12 @@ function App() {
 
   const finishQuest = (id: string) => {
     const result = completeQuest(state, id)
+    setState(result.state)
+    if (result.events.length) setEvents((current) => [...current, ...result.events])
+  }
+
+  const evolveMomo = (type: EvolutionPath) => {
+    const result = chooseEvolution(state, type)
     setState(result.state)
     if (result.event) setEvents((current) => [...current, result.event!])
   }
@@ -479,7 +534,7 @@ function App() {
         <motion.div key={screen} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }}>
           {screen === 'home' && <HomeScreen state={state} goChat={() => setScreen('chat')} />}
           {screen === 'chat' && <ChatScreen state={state} onSend={sendMessage} sending={sending} aiMode={aiMode} />}
-          {screen === 'dna' && <DnaScreen state={state} />}
+          {screen === 'dna' && <DnaScreen state={state} onEvolve={evolveMomo} />}
           {screen === 'quests' && <QuestsScreen state={state} onComplete={finishQuest} goChat={() => setScreen('chat')} />}
         </motion.div>
       </main>

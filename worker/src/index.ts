@@ -1,12 +1,7 @@
-interface Env {
-  GEMINI_API_KEY: string
-  GEMINI_MODEL?: string
-  ALLOWED_ORIGIN?: string
-}
-
 const MAX_REQUEST_BYTES = 32_000
 const MAX_MESSAGE_CHARS = 1_200
 const MAX_UPSTREAM_ATTEMPTS = 3
+const UPSTREAM_TIMEOUT_MS = 12_000
 const ALLOWED_TOPICS = new Set(['coding', 'night', 'travel', 'art', 'making'])
 
 const responseSchema = {
@@ -85,11 +80,19 @@ function cors(origin: string, allowed: string): Record<string, string> {
   const headers: Record<string, string> = {
     'Access-Control-Allow-Headers': 'Content-Type',
     'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Expose-Headers': 'X-Momo-Model, X-Momo-Attempts, X-Momo-Request-Id, Server-Timing',
     Vary: 'Origin',
   }
   if (allowed === '*') headers['Access-Control-Allow-Origin'] = '*'
   else if (origin === allowed) headers['Access-Control-Allow-Origin'] = origin
   return headers
+}
+
+function getApiKeys(env: Env) {
+  return (env.GEMINI_API_KEYS ?? env.GEMINI_API_KEY ?? '')
+    .split(',')
+    .map((key) => key.trim())
+    .filter(Boolean)
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -156,30 +159,38 @@ function publicErrorCode(error: unknown) {
   if (message === 'Gemini returned no text') return 'EMPTY_MODEL_OUTPUT'
   if (message === 'Gemini returned invalid structured output') return 'INVALID_MODEL_OUTPUT'
   if (message === 'Gemini returned invalid JSON') return 'INVALID_JSON_OUTPUT'
+  if (message === 'Gemini request timed out') return 'UPSTREAM_TIMEOUT'
+  if (message === 'Gemini API key is not configured') return 'MISSING_API_KEY'
   if (error instanceof SyntaxError) return 'INVALID_JSON_OUTPUT'
   return 'REQUEST_FAILED'
 }
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
+    const requestId = crypto.randomUUID()
+    const startedAt = Date.now()
     const origin = request.headers.get('Origin') ?? ''
     const allowedOrigin = env.ALLOWED_ORIGIN ?? '*'
-    const model = env.GEMINI_MODEL ?? 'gemma-4-26b-a4b-it'
+    const model = env.GEMINI_MODEL ?? 'gemini-3.6-flash'
+    const apiKeys = getApiKeys(env)
     const headers = cors(origin, allowedOrigin)
     headers['X-Momo-Model'] = model
+    headers['X-Momo-Request-Id'] = requestId
     if (!isOriginAllowed(origin, allowedOrigin)) {
       return jsonResponse({ error: 'Forbidden' }, 403, { Vary: 'Origin' })
     }
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers })
     const url = new URL(request.url)
     if (request.method === 'GET' && url.pathname === '/api/health') {
-      const ready = Boolean(env.GEMINI_API_KEY)
+      const ready = apiKeys.length > 0
       return jsonResponse({ status: ready ? 'ok' : 'unavailable', model }, ready ? 200 : 503, headers)
     }
     if (request.method !== 'POST' || url.pathname !== '/api/chat') {
       return jsonResponse({ error: 'Not found' }, 404, headers)
     }
+    let attemptsUsed = 0
     try {
+      if (apiKeys.length === 0) throw new Error('Gemini API key is not configured')
       const contentLength = Number(request.headers.get('Content-Length') ?? 0)
       if (contentLength > MAX_REQUEST_BYTES) return jsonResponse({ error: 'Payload too large' }, 413, headers)
       const rawBody = await request.text()
@@ -207,12 +218,32 @@ export default {
       })
       let result: unknown
       let lastModelError = 'Gemini request failed'
+      const keyStart = crypto.getRandomValues(new Uint32Array(1))[0] % apiKeys.length
       for (let attempt = 1; attempt <= MAX_UPSTREAM_ATTEMPTS; attempt += 1) {
-        const gemini = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
-          body: upstreamBody,
-        })
+        attemptsUsed = attempt
+        const controller = new AbortController()
+        const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS)
+        let gemini: Response
+        try {
+          gemini = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-goog-api-key': apiKeys[(keyStart + attempt - 1) % apiKeys.length],
+            },
+            body: upstreamBody,
+            signal: controller.signal,
+          })
+        } catch (error) {
+          if (error instanceof DOMException && error.name === 'AbortError') {
+            lastModelError = 'Gemini request timed out'
+            if (attempt === MAX_UPSTREAM_ATTEMPTS) throw new Error(lastModelError)
+            continue
+          }
+          throw error
+        } finally {
+          clearTimeout(timeout)
+        }
         if (!gemini.ok) {
           const status = gemini.status
           await gemini.body?.cancel()
@@ -248,12 +279,29 @@ export default {
         await new Promise((resolve) => setTimeout(resolve, 600 * attempt))
       }
       if (!result) throw new Error(lastModelError)
+      const durationMs = Date.now() - startedAt
+      headers['X-Momo-Attempts'] = String(attemptsUsed)
+      headers['Server-Timing'] = `gemini;dur=${durationMs}`
+      console.log(JSON.stringify({
+        event: 'chat_request_succeeded',
+        requestId,
+        model,
+        attempts: attemptsUsed,
+        durationMs,
+      }))
       return new Response(JSON.stringify(result), {
         headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
       })
     } catch (error) {
+      const durationMs = Date.now() - startedAt
+      headers['X-Momo-Attempts'] = String(attemptsUsed)
+      headers['Server-Timing'] = `gemini;dur=${durationMs}`
       console.error(JSON.stringify({
         event: 'chat_request_failed',
+        requestId,
+        model,
+        attempts: attemptsUsed,
+        durationMs,
         name: error instanceof Error ? error.name : 'UnknownError',
         message: error instanceof Error ? error.message : 'Unknown error',
       }))

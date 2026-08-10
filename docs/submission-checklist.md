@@ -25,11 +25,11 @@ AI 활용 기술 PDF: submission/MOMO_AI활용기술문서.pdf
 - [x] GitHub Pages를 배포했고 공개 URL에서 HTTP 200을 확인했다.
 - [x] 공개 Pages 모바일 뷰포트에서 시작 → 기억 → 진화 → 능력 해금 → 퀘스트 생성 → 완료를 자동 완주했다.
 - [x] `npm run build`와 `npm run lint`가 성공했다.
-- [x] 공개 서버 프록시를 통해 Gemma 4 26B A4B IT(`gemma-4-26b-a4b-it`) 실호출을 검증했다.
+- [x] 서버 프록시를 통해 Gemini 3.6 Flash(`gemini-3.6-flash`) 실호출을 검증했다.
 - [x] 공개 Live 전체 흐름을 두 번 연속 실행했고 매회 API 상태 `[200, 200, 200, 200]`을 확인했다.
 - [x] 일반 대화·Memory는 전체 Structured Output, Quest 답변은 축소 `{reply}` 스키마와 결정론적 intent parser로 처리한다.
 - [x] 일시적 429·5xx와 잘못된 JSON을 최대 3회까지만 재시도한다.
-- [x] Live AI 연결 실패 또는 45초 제한 초과 시 Demo Safe로 전환되는 경로를 구현했다.
+- [x] Live AI 연결 실패 또는 32초 제한 초과 시 Offline Fallback으로 전환되는 경로를 구현했다.
 - [x] 배포 번들·Git 추적 파일에 API 키 패턴이 없음을 검색했다.
 - [x] `.env.local`과 테스트 산출물은 Git에서 제외했다.
 - [x] 게임 상태는 새로고침 후 유지되며 초기화 버튼으로 삭제할 수 있다.

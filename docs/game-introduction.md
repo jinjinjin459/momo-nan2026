@@ -95,7 +95,7 @@ Character DNA 엔진은 네 성장 트랙을 계산하지만, 이 제출 빌드�
 - 플레이 동영상 YouTube: **업로드 후 링크 반영 예정**
 - 소스 코드: **https://github.com/jinjinjin459/momo-nan2026**
 
-웹 플레이 기본 링크는 Cloudflare Worker를 통해 Gemma 4 Live AI를 사용합니다. 공개 환경에서 기억 회상, Night Owl 진화, Quest 완료와 새로고침 후 진행 유지까지 두 번 연속 검증했습니다. 네트워크 장애 시에는 자동으로 Demo Safe로 전환됩니다.
+웹 플레이 기본 링크는 Cloudflare Worker를 통해 Gemini 3.6 Flash Live AI를 사용합니다. 네트워크 장애 시에는 자동으로 Offline Fallback으로 전환되고 다음 메시지에서 재연결합니다.
 
 제출용 MP4는 공개 Live AI만 사용한 실제 플레이 화면을 40.000초로 녹화했습니다. H.264, 720×1280, 30fps, 1,200프레임이며 시작, Memory, Gemma 4 기억 회상, Quest 해금·생성, Demo Complete와 Night Owl DNA를 포함합니다. AI 영상 합성이나 Demo fallback 장면은 사용하지 않았습니다.
 
@@ -112,7 +112,7 @@ npm run dev
 
 터미널에 표시되는 로컬 URL을 브라우저에서 엽니다. AI 서버 주소가 설정되지 않아도 규칙 기반 Demo AI로 전체 게임 루프를 플레이할 수 있습니다.
 
-### Gemma 4 연동 실행(Gemini API)
+### Gemini 3.6 Flash 연동 실행(Gemini API)
 
 1. `.env.example`을 참고해 로컬 전용 `.env.local`을 만듭니다.
 2. Google AI API 키는 `GEMINI_API_KEY`라는 서버 전용 환경 변수로만 설정합니다.

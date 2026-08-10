@@ -1,7 +1,7 @@
 import { createServer } from 'node:http'
 
 const port = Number(process.env.PORT ?? 8787)
-const model = process.env.GEMINI_MODEL ?? 'gemma-4-26b-a4b-it'
+const model = process.env.GEMINI_MODEL ?? 'gemini-3.6-flash'
 const keys = (process.env.GEMINI_API_KEYS ?? process.env.GEMINI_API_KEY ?? '')
   .split(',')
   .map((key) => key.trim())
@@ -10,6 +10,8 @@ const allowedOrigin = process.env.ALLOWED_ORIGIN ?? 'http://127.0.0.1:4627'
 let keyCursor = 0
 const MAX_REQUEST_BYTES = 32_000
 const MAX_MESSAGE_CHARS = 1_200
+const MAX_UPSTREAM_ATTEMPTS = 3
+const UPSTREAM_TIMEOUT_MS = 12_000
 const ALLOWED_TOPICS = new Set(['coding', 'night', 'travel', 'art', 'making'])
 
 const jsonSchema = {
@@ -162,24 +164,37 @@ async function readJson(request) {
 
 async function callGemini(payload) {
   if (!keys.length) throw new Error('GEMINI_API_KEY is not configured')
-  const attempts = Math.min(keys.length, 3)
   let lastError
 
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
+  for (let attempt = 0; attempt < MAX_UPSTREAM_ATTEMPTS; attempt += 1) {
     const key = keys[keyCursor++ % keys.length]
-    const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
-        contents: [{ role: 'user', parts: [{ text: JSON.stringify(payload) }] }],
-        generationConfig: {
-          responseMimeType: 'application/json',
-          responseJsonSchema: jsonSchema,
-          maxOutputTokens: 700,
-        },
-      }),
-    })
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), UPSTREAM_TIMEOUT_MS)
+    let response
+    try {
+      response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({
+          systemInstruction: { parts: [{ text: systemPrompt }] },
+          contents: [{ role: 'user', parts: [{ text: JSON.stringify(payload) }] }],
+          generationConfig: {
+            responseMimeType: 'application/json',
+            responseJsonSchema: jsonSchema,
+            maxOutputTokens: 700,
+          },
+        }),
+        signal: controller.signal,
+      })
+    } catch (error) {
+      lastError = error instanceof DOMException && error.name === 'AbortError'
+        ? new Error('Gemini request timed out')
+        : error
+      if (attempt + 1 < MAX_UPSTREAM_ATTEMPTS) continue
+      throw lastError
+    } finally {
+      clearTimeout(timeout)
+    }
 
     if (response.ok) {
       const data = await response.json()
@@ -190,9 +205,10 @@ async function callGemini(payload) {
       return result
     }
 
-    await response.text()
+    await response.body?.cancel()
     lastError = new Error(`Gemini request failed with status ${response.status}`)
     if (![429, 500, 502, 503, 504].includes(response.status)) break
+    await new Promise((resolve) => setTimeout(resolve, 500 * (attempt + 1)))
   }
   throw lastError ?? new Error('Gemini request failed')
 }
