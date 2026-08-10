@@ -1,0 +1,12 @@
+name = "momo-nan2026-ai"
+main = "src/index.ts"
+compatibility_date = "2026-08-10"
+
+[vars]
+GEMINI_MODEL = "gemini-3.6-flash"
+ALLOWED_ORIGIN = "*"
+
+# Deploy steps:
+# 1. npx wrangler secret put GEMINI_API_KEY --config worker/wrangler.toml
+# 2. npx wrangler deploy --config worker/wrangler.toml
+# 3. Build the web app with VITE_API_BASE_URL set to the Worker URL.
