@@ -36,7 +36,7 @@ const send = async (message) => {
   await page.getByRole('textbox', { name: '메시지' }).fill(message)
   await page.getByRole('button', { name: '전송' }).click()
   await page.locator('.typing').waitFor({ state: 'visible', timeout: 3_000 }).catch(() => {})
-  await page.locator('.typing').waitFor({ state: 'hidden', timeout: 20_000 })
+  await page.locator('.typing').waitFor({ state: 'hidden', timeout: 35_000 })
   return dismissEvents()
 }
 
