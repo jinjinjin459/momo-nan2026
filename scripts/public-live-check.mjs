@@ -52,7 +52,6 @@ try {
     firstApiResponses: apiResponses,
     failedRequests,
     modePills: await page.locator('.mode-pill').allTextContents(),
-    chatStatus: await page.locator('.chat-title-row span').allTextContents(),
   }))
   await page.getByText('Gemma 4 · 26B').waitFor({ timeout: 3_000 })
   if (!firstEvents.includes('MEMORY DISCOVERED')) throw new Error('Live memory event was not created')

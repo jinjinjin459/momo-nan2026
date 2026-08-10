@@ -6,7 +6,7 @@ interface Env {
 
 const MAX_REQUEST_BYTES = 32_000
 const MAX_MESSAGE_CHARS = 1_200
-const MAX_UPSTREAM_ATTEMPTS = 2
+const MAX_UPSTREAM_ATTEMPTS = 3
 const ALLOWED_TOPICS = new Set(['coding', 'night', 'travel', 'art', 'making'])
 
 const responseSchema = {
@@ -46,6 +46,13 @@ const responseSchema = {
   additionalProperties: false,
 }
 
+const replyOnlySchema = {
+  type: 'object',
+  properties: { reply: { type: 'string' } },
+  required: ['reply'],
+  additionalProperties: false,
+}
+
 const systemPrompt = `너는 AI 생명체 육성 게임의 캐릭터 Momo다.
 친근하고 자연스러운 한국어 반말로 1~3문장만 답한다. 사용자를 평가하거나 과장하지 않는다.
 
@@ -65,6 +72,11 @@ questIntent.title에는 날짜, 시간, '기억해 줘' 같은 요청 표현을 
 
 지정된 JSON 스키마 이외의 필드는 만들지 않는다.`
 
+const questReplyPrompt = `너는 AI 생명체 육성 게임의 캐릭터 Momo다.
+사용자의 할 일을 이해했다는 친근한 한국어 반말 답변을 한두 문장으로 짧게 말한다.
+직접 알림을 보낸다고 과장하지 말고, 함께 기억하겠다고 표현한다.
+지정된 JSON 스키마의 reply 필드만 반환한다.`
+
 function isOriginAllowed(origin: string, allowed: string) {
   return !origin || allowed === '*' || origin === allowed
 }
@@ -82,6 +94,13 @@ function cors(origin: string, allowed: string): Record<string, string> {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isQuestCommand(payload: Record<string, unknown>) {
+  if (typeof payload.message !== 'string') return false
+  const character = payload.character
+  if (!isRecord(character) || !Array.isArray(character.abilities) || !character.abilities.includes('quest')) return false
+  return /기억해\s*(?:줘|주세요|둬|놓아|달라)|할 일|해야|리마인드|todo|task|등록해/i.test(payload.message)
 }
 
 function isStringArray(value: unknown, maxItems: number): value is string[] {
@@ -128,6 +147,7 @@ function publicErrorCode(error: unknown) {
   if (upstreamStatus) return `UPSTREAM_${upstreamStatus}`
   if (message === 'Gemini returned no text') return 'EMPTY_MODEL_OUTPUT'
   if (message === 'Gemini returned invalid structured output') return 'INVALID_MODEL_OUTPUT'
+  if (message === 'Gemini returned invalid JSON') return 'INVALID_JSON_OUTPUT'
   if (error instanceof SyntaxError) return 'INVALID_JSON_OUTPUT'
   return 'REQUEST_FAILED'
 }
@@ -167,38 +187,59 @@ export default {
       if (!isRecord(payload) || typeof payload.message !== 'string' || payload.message.length > MAX_MESSAGE_CHARS) {
         return jsonResponse({ error: 'Invalid message' }, 400, headers)
       }
+      const questReplyOnly = isQuestCommand(payload)
       const upstreamBody = JSON.stringify({
-        systemInstruction: { parts: [{ text: systemPrompt }] },
+        systemInstruction: { parts: [{ text: questReplyOnly ? questReplyPrompt : systemPrompt }] },
         contents: [{ role: 'user', parts: [{ text: JSON.stringify(payload) }] }],
         generationConfig: {
           responseMimeType: 'application/json',
-          responseJsonSchema: responseSchema,
-          maxOutputTokens: 700,
+          responseJsonSchema: questReplyOnly ? replyOnlySchema : responseSchema,
+          maxOutputTokens: questReplyOnly ? 220 : 700,
         },
       })
-      let gemini: Response | undefined
+      let result: unknown
+      let lastModelError = 'Gemini request failed'
       for (let attempt = 1; attempt <= MAX_UPSTREAM_ATTEMPTS; attempt += 1) {
-        gemini = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+        const gemini = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': env.GEMINI_API_KEY },
           body: upstreamBody,
         })
-        if (gemini.ok) break
-
-        const status = gemini.status
-        await gemini.body?.cancel()
-        const retryable = status === 429 || status >= 500
-        if (!retryable || attempt === MAX_UPSTREAM_ATTEMPTS) {
-          throw new Error(`Gemini request failed with status ${status}`)
+        if (!gemini.ok) {
+          const status = gemini.status
+          await gemini.body?.cancel()
+          const retryable = status === 429 || status >= 500
+          if (!retryable || attempt === MAX_UPSTREAM_ATTEMPTS) {
+            throw new Error(`Gemini request failed with status ${status}`)
+          }
+          await new Promise((resolve) => setTimeout(resolve, 600 * attempt))
+          continue
         }
+
+        const data = await gemini.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
+        const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? '').join('')
+        if (!text) {
+          lastModelError = 'Gemini returned no text'
+        } else {
+          try {
+            const parsed: unknown = JSON.parse(text)
+            if (questReplyOnly && isRecord(parsed) && typeof parsed.reply === 'string' && parsed.reply.trim()) {
+              result = { reply: parsed.reply, memoryCandidate: null, topics: [], questIntent: null }
+            } else if (!questReplyOnly && isValidAiResult(parsed)) {
+              result = parsed
+            } else {
+              lastModelError = 'Gemini returned invalid structured output'
+            }
+          } catch {
+            lastModelError = 'Gemini returned invalid JSON'
+          }
+        }
+
+        if (result) break
+        if (attempt === MAX_UPSTREAM_ATTEMPTS) throw new Error(lastModelError)
         await new Promise((resolve) => setTimeout(resolve, 600 * attempt))
       }
-      if (!gemini?.ok) throw new Error('Gemini request failed')
-      const data = await gemini.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> }
-      const text = data.candidates?.[0]?.content?.parts?.map((part) => part.text ?? '').join('')
-      if (!text) throw new Error('Gemini returned no text')
-      const result: unknown = JSON.parse(text)
-      if (!isValidAiResult(result)) throw new Error('Gemini returned invalid structured output')
+      if (!result) throw new Error(lastModelError)
       return new Response(JSON.stringify(result), {
         headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
       })
