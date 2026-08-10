@@ -8,7 +8,8 @@
 
 - 게임: https://jinjinjin459.github.io/momo-nan2026/
 - AI 장애 대비 강제 Demo Safe: https://jinjinjin459.github.io/momo-nan2026/?demo=1
-- 40초 실제 플레이 영상: MP4 및 YouTube 링크 반영 예정
+- 40초 실제 플레이 MP4: `submission/MOMO_플레이영상_40초.mp4` (검증 완료)
+- YouTube: 업로드 후 링크 반영 예정
 
 ## Core loop
 
@@ -36,15 +37,18 @@ Character DNA는 Night Owl, Creator, Artist, Explorer 네 성장 트랙을 계�
 
 ## AI architecture
 
-Live AI 경로는 Google Gemini API의 공식 모델 Gemma 4 26B A4B IT(`gemma-4-26b-a4b-it`)를 호출하도록 구성되어 있습니다. 한 번의 Structured Output으로 캐릭터 답변, 기억 후보, 성장 주제, 퀘스트 의도를 반환하도록 설계했으며, 모델은 의미만 분류하고 실제 DNA 점수·Bond·진화·보상은 `src/engine.ts`의 결정론적 규칙이 계산합니다.
+공개 Live AI는 Google Gemini API의 공식 모델 Gemma 4 26B A4B IT(`gemma-4-26b-a4b-it`)를 호출합니다. 일반 대화와 Memory는 한 번의 전체 Structured Output으로 처리합니다. Quest 요청은 Gemma 4가 축소된 `{ reply }` 스키마로 Momo의 답변을 만들고, 클라이언트의 결정론적 intent parser가 title과 time을 보완합니다. 실제 DNA 점수·Bond·진화·보상은 항상 `src/engine.ts`의 규칙이 계산합니다.
 
 ```text
-Browser → server-side proxy / Cloudflare Worker → Gemini API / Gemma 4 26B A4B IT
-        ← schema-validated JSON ←
+Browser → Cloudflare Worker → Gemini API / Gemma 4 26B A4B IT
+        ← full structured JSON (Chat / Memory)
+        ← { reply } + deterministic intent parser (Quest)
         → deterministic game engine → localStorage
 ```
 
-API 키는 브라우저 번들에 포함하지 않습니다. Live endpoint가 설정된 빌드에서는 서버 측 프록시를 통해 Gemma 4를 호출합니다. endpoint가 없거나 9초 내 응답하지 않으면 화면에 `Demo Safe`를 표시하고 규칙 기반 Demo AI가 전체 게임 루프를 이어갑니다. `?demo=1`은 심사 중 네트워크 장애에 대비한 강제 폴백 경로입니다.
+API 키는 브라우저 번들에 포함하지 않습니다. 공개 기본 URL은 배포된 Worker를 통해 Gemma 4 Live AI를 사용합니다. 일시적인 429·5xx 응답이나 잘못된 JSON은 Worker에서 최대 3회까지만 재시도합니다. 45초 안에 유효한 응답을 받지 못하면 화면에 `Demo Safe`를 표시하고 규칙 기반 Demo AI가 전체 게임 루프를 이어갑니다. `?demo=1`은 심사 중 네트워크 장애에 대비한 강제 폴백 경로입니다.
+
+제출용 MP4는 공개 기본 URL의 Live AI만 사용한 실제 플레이를 녹화한 40.000초 영상입니다. H.264, 720×1280, 30fps, 1,200프레임이며 AI 영상 합성이나 Demo fallback 장면을 포함하지 않습니다.
 
 ## Run locally
 
@@ -83,9 +87,10 @@ npm run build
 npm run lint
 npm run check:play
 node scripts/live-ai-check.mjs
+node scripts/public-live-check.mjs
 ```
 
-`check:play`은 Chrome 모바일 뷰포트에서 시작 → 기억 → 진화 → 능력 해금 → 퀘스트 → 완료 보상을 실제로 클릭해 검증합니다. `live-ai-check`는 로컬 프록시가 실행 중일 때 Gemma 4 응답과 기억/점수 반영을 검증합니다.
+`check:play`은 Chrome 모바일 뷰포트에서 시작 → 기억 → 진화 → 능력 해금 → 퀘스트 → 완료 보상을 실제로 클릭해 검증합니다. `live-ai-check`는 로컬 프록시의 Gemma 4 응답을 확인합니다. `public-live-check`는 공개 URL에서 기억 회상 → Night Owl 진화 → Quest 완료 → 새로고침 후 상태 유지까지 확인합니다. 공개 Live 검증은 두 번 연속 네 요청 모두 `[200, 200, 200, 200]`으로 통과했습니다.
 
 ## Documentation
 

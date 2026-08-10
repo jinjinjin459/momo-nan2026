@@ -2,14 +2,14 @@
 
 ## 1. AI 활용 개요
 
-MOMO의 Live AI 경로는 Google Gemini API의 공식 모델 Gemma 4 26B A4B IT(`gemma-4-26b-a4b-it`)를 게임 입력 해석 계층으로 호출하도록 구성되어 있습니다. 한 번의 요청으로 다음 네 결과를 구조화해 반환하도록 설계했습니다.
+MOMO의 공개 Live AI 경로는 Google Gemini API의 공식 모델 Gemma 4 26B A4B IT(`gemma-4-26b-a4b-it`)를 게임 입력 해석 계층으로 사용합니다. 일반 대화와 Memory 요청은 한 번의 전체 Structured Output으로 다음 네 결과를 반환합니다.
 
 1. Momo의 캐릭터 대사
 2. 장기 기억 후보
 3. 현재 대화에 포함된 성장 주제
 4. 현실 퀘스트 생성 의도
 
-AI는 의미를 분류하고 후보를 제안하지만, 점수·레벨·진화·보상처럼 게임 결과에 직접 영향을 주는 계산은 TypeScript 규칙 엔진이 결정합니다. 이 분리는 자연스러운 대화와 재현 가능한 게임 규칙을 동시에 확보하기 위한 설계입니다.
+Quest 요청은 별도 경량 경로를 사용합니다. Gemma 4는 축소된 `{ reply }` 스키마로 캐릭터 답변을 생성하고, 클라이언트의 결정론적 intent parser가 퀘스트 title과 time을 보완합니다. AI는 의미와 표현을 담당하지만, 점수·레벨·진화·보상처럼 게임 결과에 직접 영향을 주는 계산은 TypeScript 규칙 엔진이 결정합니다. 이 분리는 자연스러운 대화와 재현 가능한 게임 규칙을 동시에 확보하기 위한 설계입니다.
 
 ## 2. 전체 구조
 
@@ -20,18 +20,20 @@ AI는 의미를 분류하고 후보를 제안하지만, 점수·레벨·진화·
         ↓
   src/ai.ts
     ├─ 최근 기억 최대 6개를 포함한 Context 구성
-    └─ VITE_API_BASE_URL/api/chat 호출 (9초 제한)
+    └─ VITE_API_BASE_URL/api/chat 호출 (45초 제한)
         ↓
 서버 측 Google AI 프록시
   ├─ 로컬: server/gemini-proxy.mjs
   └─ 배포: worker/src/index.ts
         ↓
 Gemini API / Gemma 4 26B A4B IT
-  └─ JSON Schema 기반 Structured Output
+  ├─ Chat·Memory: 전체 JSON Schema
+  └─ Quest: 축소 { reply } Schema
         ↓
 클라이언트 Zod 검증
         ↓
 src/engine.ts
+  ├─ 누락된 topic·Memory·Quest intent의 결정론적 보완
   ├─ 기억 중복 제거 및 저장
   ├─ 주제별 DNA 점수 계산
   ├─ Bond Level 계산
@@ -47,12 +49,16 @@ localStorage에 CharacterState 저장
 - API: Google Generative Language API `generateContent`
 - 호출 위치: 브라우저가 아닌 서버 측 프록시 또는 Cloudflare Worker
 - 출력 방식: `responseMimeType: application/json`과 `responseJsonSchema`를 이용한 Structured Output
-- 최대 출력 토큰: 700
-- 브라우저 요청 제한 시간: 9초
+- 최대 출력 토큰: 일반 요청 700, Quest 답변 220
+- 브라우저 요청 제한 시간: 45초
 
-로컬 프록시는 `GEMINI_API_KEY` 또는 서버 전용 `GEMINI_API_KEYS`를 읽습니다. 여러 키가 서버에 설정된 경우 최대 세 번까지 순환하며 429와 일부 5xx 응답을 재시도합니다. 배포용 Worker는 Cloudflare secret `GEMINI_API_KEY`를 사용합니다.
+로컬 프록시는 `GEMINI_API_KEY` 또는 서버 전용 `GEMINI_API_KEYS`를 읽습니다. 배포용 Worker는 Cloudflare secret `GEMINI_API_KEY`를 사용합니다. 배포 Worker는 일시적인 429·5xx 응답, JSON 파싱 실패 또는 스키마 검증 실패를 최대 3회까지만 재시도하며, 재시도 사이에는 제한된 지연을 둡니다. 재시도 대상이 아닌 4xx 응답은 즉시 실패 처리합니다.
 
 API 키는 소스, 클라이언트 번들, 문서에 포함하지 않습니다. `VITE_API_BASE_URL`에는 비밀 값이 아니라 프록시의 공개 주소만 들어갑니다.
+
+### 공개 Live 검증
+
+공개 GitHub Pages에서 기억 생성·회상 → Night Owl 진화 → Quest 생성·완료 → 새로고침 후 상태 유지를 실제 브라우저로 검증했습니다. 이 전체 흐름을 두 번 연속 실행했고, 각 실행에서 네 번의 `/api/chat` 응답이 모두 `[200, 200, 200, 200]`이었습니다.
 
 ## 4. Gemma 4 System Instruction 전문
 
@@ -62,6 +68,10 @@ API 키는 소스, 클라이언트 번들, 문서에 포함하지 않습니다. 
 너는 AI 생명체 육성 게임의 캐릭터 Momo다.
 친근하고 자연스러운 한국어 반말로 1~3문장만 답한다. 사용자를 평가하거나 과장하지 않는다.
 
+payload.knownMemories는 이전 대화에서 확인해 저장한 사용자 기억이다.
+현재 질문과 관련 있거나 사용자가 무엇을 기억하는지 명시적으로 물으면, knownMemories의 사실을 자연스럽게 답변에 사용한다.
+knownMemories에 없는 사실은 기억한다고 지어내지 않고, 관련 없는 답변에 억지로 끼워 넣지 않는다.
+
 사용자가 밝힌 안정적인 취향, 직업, 습관만 memoryCandidate로 저장한다.
 일회성 감정이나 민감정보는 저장하지 않는다.
 
@@ -69,10 +79,21 @@ topics는 발화의 의미에 맞는 항목만 고른다.
 허용 항목은 coding, night, travel, art, making이다.
 
 사용자가 할 일을 기억해 달라고 했고 character.abilities에 quest가 있을 때만 questIntent를 만든다.
-questIntent.title에는 날짜, 시간, ‘기억해 줘’ 같은 요청 표현을 제거하고 실제 행동만 넣는다.
+questIntent.title에는 날짜, 시간, '기억해 줘' 같은 요청 표현을 제거하고 실제 행동만 넣는다.
 현재 시간이 제공되면 상대 날짜를 ISO 8601로 해석하되, 불확실하면 datetime은 null로 둔다.
 
 지정된 JSON 스키마 이외의 필드는 만들지 않는다.
+```
+
+### Quest 답변 전용 System Instruction 전문
+
+아래 지시문은 공개 배포의 `worker/src/index.ts`가 명시적인 Quest 요청에 사용합니다.
+
+```text
+너는 AI 생명체 육성 게임의 캐릭터 Momo다.
+사용자의 할 일을 이해했다는 친근한 한국어 반말 답변을 한두 문장으로 짧게 말한다.
+직접 알림을 보낸다고 과장하지 말고, 함께 기억하겠다고 표현한다.
+지정된 JSON 스키마의 reply 필드만 반환한다.
 ```
 
 ### 매 요청에 전달되는 Context
@@ -96,9 +117,11 @@ System Instruction과 별도로 현재 메시지 및 캐릭터 상태를 JSON으
 
 기억 전체를 무제한 전송하지 않고 최신 기억 여섯 개만 Context에 사용합니다.
 
-## 5. Structured Output 계약
+## 5. Structured Output과 Quest 하이브리드 계약
 
-Gemma 4의 응답은 다음 구조를 만족해야 합니다.
+### 일반 대화와 Memory
+
+일반 대화와 Memory에서 Gemma 4의 응답은 다음 전체 구조를 만족해야 합니다.
 
 ```json
 {
@@ -114,13 +137,34 @@ Gemma 4의 응답은 다음 구조를 만족해야 합니다.
 }
 ```
 
-퀘스트 요청의 예시는 다음과 같습니다.
+### Quest 요청
+
+Quest 능력이 해금된 상태에서 명시적인 할 일 요청을 감지하면 Worker는 출력 스키마를 `{ reply }`로 축소하고 최대 출력 토큰을 220으로 낮춥니다. 이때 Gemma 4가 직접 생성하는 결과는 캐릭터 답변뿐입니다.
 
 ```json
 {
-  "reply": "좋아. 오늘 밤 발표 자료 만들기를 퀘스트로 기억해 둘게.",
+  "reply": "좋아. 오늘 밤 발표 자료 만들기를 우리 퀘스트로 기억해 둘게."
+}
+```
+
+Worker는 이 응답을 클라이언트 공통 스키마에 맞게 확장합니다.
+
+```json
+{
+  "reply": "좋아. 오늘 밤 발표 자료 만들기를 우리 퀘스트로 기억해 둘게.",
   "memoryCandidate": null,
-  "topics": ["making", "night"],
+  "topics": [],
+  "questIntent": null
+}
+```
+
+그 뒤 `src/ai.ts`의 결정론적 parser가 원문에서 title과 time을 추출해 빈 `questIntent`를 보완합니다. 앱에 적용되는 최종 결과의 예시는 다음과 같습니다.
+
+```json
+{
+  "reply": "좋아. 오늘 밤 발표 자료 만들기를 우리 퀘스트로 기억해 둘게.",
+  "memoryCandidate": null,
+  "topics": ["night", "making"],
   "questIntent": {
     "type": "create_quest",
     "title": "NAN 발표 자료 만들기",
@@ -130,7 +174,7 @@ Gemma 4의 응답은 다음 구조를 만족해야 합니다.
 }
 ```
 
-브라우저는 `src/ai.ts`의 Zod 스키마로 응답을 다시 검증합니다. 필수 필드 누락, 허용되지 않은 topic, 중요도 범위 초과, 형식이 다른 퀘스트 등은 정상 응답으로 적용하지 않습니다.
+브라우저는 Worker가 정규화한 응답을 `src/ai.ts`의 Zod 스키마로 다시 검증합니다. 필수 필드 누락, 허용되지 않은 topic, 중요도 범위 초과, 형식이 다른 퀘스트 등은 정상 응답으로 적용하지 않습니다. 검증이 끝난 뒤 모델 응답의 빈 값과 클라이언트가 직접 추출한 topic·Memory·Quest intent를 합칩니다.
 
 ## 6. Deterministic Evolution Engine
 
@@ -169,13 +213,13 @@ Character DNA 엔진은 Night Owl, Creator, Artist, Explorer 네 트랙과 각 �
 - `VITE_API_BASE_URL`이 설정되지 않은 정적 배포
 - URL에 `?demo=1`을 지정해 강제 폴백을 선택한 경우
 - 네트워크 오류
-- 9초 이상 응답 지연
+- 45초 이상 응답 지연
 - 4xx/5xx 서버 응답
 - JSON 파싱 또는 Zod 검증 실패
 
 Demo AI는 한국어·영어 키워드를 topic에 대응시키고, 기억 요청 및 퀘스트 요청 패턴을 규칙으로 분석합니다. 동일한 의미의 데모 입력은 같은 topic, 기억 후보와 퀘스트 의도로 처리되므로 API 상태와 무관하게 핵심 게임 루프를 시연할 수 있습니다. Live 응답 후 채팅 프로필에는 `Gemma 4 · 26B`가 표시되고, 폴백 중에는 상단에 `Demo Safe`, 채팅 프로필에 `Resilient Demo AI`가 표시됩니다.
 
-프록시는 요청 본문을 32KB 이하로 제한하고 사용자 메시지를 최대 1,200자로 제한합니다. `/api/health`는 설정된 모델과 서버 준비 상태를 반환하고, 응답의 `X-Momo-Model` 헤더로 실제 선택 모델을 확인할 수 있습니다. 성공 응답에는 `Cache-Control: no-store`를 적용합니다.
+프록시는 요청 본문을 32KB 이하로 제한하고 사용자 메시지를 최대 1,200자로 제한합니다. `/api/health`는 설정된 모델과 서버 준비 상태를 반환하고, 응답의 `X-Momo-Model` 헤더로 실제 선택 모델을 확인할 수 있습니다. 성공 응답에는 `Cache-Control: no-store`를 적용합니다. Worker 재시도가 모두 실패하거나 클라이언트의 45초 제한을 넘으면 Demo AI로 전환합니다.
 
 ## 8. 데이터와 개인정보 처리
 
@@ -242,7 +286,7 @@ add a deeper indigo aura, moon-and-star motifs and a more alert nocturnal expres
 | Playwright 1.62 | 실제 브라우저 플레이 확인 | playwright.dev / npm | Apache-2.0 |
 | Oxlint | 소스 정적 검사 | oxc.rs / npm | MIT |
 
-별도의 외부 사운드, 음성, 영상, 타 게임 이미지 또는 상용 에셋은 사용하지 않았습니다. `public/icons.svg`와 `public/favicon.svg`는 프로젝트 UI용 로컬 벡터이며, 화면 아이콘은 Lucide React를 통해 렌더링합니다.
+별도의 외부 사운드, 음성, 영상, 타 게임 이미지 또는 상용 에셋은 사용하지 않았습니다. 제출용 `MOMO_플레이영상_40초.mp4`는 공개 Live 빌드의 실제 플레이를 직접 녹화한 영상이며 AI 영상 합성을 사용하지 않았습니다. `public/icons.svg`와 `public/favicon.svg`는 프로젝트 UI용 로컬 벡터이며, 화면 아이콘은 Lucide React를 통해 렌더링합니다.
 
 ## 11. 현재 한계와 확장 방향
 

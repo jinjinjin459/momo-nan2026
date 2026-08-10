@@ -24,10 +24,17 @@ page.on('requestfailed', (request) => {
 
 const dismissEvents = async () => {
   const titles = []
-  while (await page.locator('.event-overlay').isVisible().catch(() => false)) {
-    titles.push((await page.locator('.event-card .micro-label').textContent())?.trim() ?? '')
-    await page.locator('.event-card .primary-button').click()
-    await page.waitForTimeout(180)
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const overlay = page.locator('.event-overlay')
+    if (!await overlay.isVisible().catch(() => false)) break
+    const title = await page.locator('.event-card .micro-label').textContent({ timeout: 1_500 }).catch(() => null)
+    if (!title) {
+      await page.waitForTimeout(250)
+      continue
+    }
+    titles.push(title.trim())
+    await page.locator('.event-card .primary-button').click({ timeout: 2_000 })
+    await page.waitForTimeout(300)
   }
   return titles
 }

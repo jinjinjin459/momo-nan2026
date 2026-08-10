@@ -3,7 +3,7 @@ MOMO: Life-Bonded AI — NAN 2026 제출 링크
 웹 플레이
 https://jinjinjin459.github.io/momo-nan2026/
 
-안정적 심사용 데모
+AI 장애 대비 강제 Demo Safe
 https://jinjinjin459.github.io/momo-nan2026/?demo=1
 
 전체 소스 코드 및 커밋 기록
@@ -19,4 +19,5 @@ MOMO_AI활용기술문서.pdf
 개인 참가이므로 제출 대상 아님
 
 플레이 영상
-사용자 직접 촬영·YouTube 업로드 후 접수 폼에 링크 입력
+MP4: MOMO_플레이영상_40초.mp4 (40.000초 실제 공개 Live 플레이, 검증 완료)
+YouTube: 업로드 후 접수 폼과 문서에 링크 입력
