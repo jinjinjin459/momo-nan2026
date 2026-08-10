@@ -14,7 +14,7 @@ dist-ssr
 .env
 .env.*
 !.env.example
-artifacts/logs/
+artifacts/
 
 # Editor directories and files
 .vscode/*

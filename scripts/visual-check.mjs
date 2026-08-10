@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 
 const outputDir = fileURLToPath(new URL('../artifacts/visual-check/', import.meta.url))
+const gameUrl = process.env.MOMO_PLAY_URL ?? 'http://127.0.0.1:4627/?demo=1'
 await mkdir(outputDir, { recursive: true })
 
 const browser = await chromium.launch({
@@ -10,7 +11,7 @@ const browser = await chromium.launch({
   executablePath: 'C:/Program Files/Google/Chrome/Application/chrome.exe',
 })
 const page = await browser.newPage({ viewport: { width: 390, height: 844 }, deviceScaleFactor: 1 })
-await page.goto('http://127.0.0.1:4627/?demo=1', { waitUntil: 'networkidle' })
+await page.goto(gameUrl, { waitUntil: 'networkidle' })
 await page.evaluate(() => localStorage.clear())
 await page.reload({ waitUntil: 'networkidle' })
 
